@@ -10,6 +10,8 @@
 use std::{collections::HashMap, num::ParseIntError};
 
 use displaydoc::Display;
+use once_cell::sync::Lazy;
+use std::sync::Mutex;
 use thiserror::Error;
 use time::{Duration, OffsetDateTime};
 
@@ -28,7 +30,57 @@ use time::{Duration, OffsetDateTime};
 // X-RateLimit-Remaining The remaining number of API responses that the requester can make through your app in the current 60-second period.*
 // X-RateLimit-Reset	 A datetime value indicating when the next 60-second period begins.
 
-const HEADER_RATE_LIMIT: &str = "x-ratelimit-limit";
+#[derive(Clone, Debug, PartialEq)]
+enum Vendor {
+    Standard,
+    Twitter,
+    Github,
+    Vimeo,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct HeaderVariant {
+    name: String,
+    duration: Option<Duration>,
+    vendor: Vendor,
+}
+
+impl HeaderVariant {
+    fn new(name: String, duration: Option<Duration>, vendor: Vendor) -> Self {
+        Self {
+            name,
+            duration,
+            vendor,
+        }
+    }
+}
+
+static HEADERS_RATE_LIMIT: Lazy<Mutex<Vec<HeaderVariant>>> = Lazy::new(|| {
+    let mut v = Vec::new();
+    v.push(HeaderVariant::new(
+        "RateLimit-Limit".to_string(),
+        None,
+        Vendor::Standard,
+    ));
+    v.push(HeaderVariant::new(
+        "x-ratelimit-limit".to_string(),
+        Some(Duration::HOUR),
+        Vendor::Github,
+    ));
+    v.push(HeaderVariant::new(
+        "x-rate-limit-limit".to_string(),
+        Some(Duration::minutes(15)),
+        Vendor::Twitter,
+    ));
+    v.push(HeaderVariant::new(
+        "X-RateLimit-Limit".to_string(),
+        Some(Duration::seconds(60)),
+        Vendor::Vimeo,
+    ));
+
+    Mutex::new(v)
+});
+
 const HEADER_REMAINING: &str = "x-ratelimit-remaining";
 const HEADER_RESET: &str = "x-ratelimit-reset";
 
@@ -47,6 +99,9 @@ pub enum RateLimitError {
     /// Cannot parse rate limit header value: {0}
     InvalidValue(#[from] ParseIntError),
 
+    /// Cannot lock header map
+    Lock,
+
     /// Error parsing reset time: {0}
     Time(#[from] time::error::ComponentRange),
 }
@@ -63,12 +118,16 @@ fn to_i64(value: &str) -> Result<i64> {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Limit {
+    /// Maximum number of requests for the given interval
     count: usize,
-    window: Duration,
+    /// The time window until the rate limit is lifted.
+    /// It is optional, because it might not be given,
+    /// in which case it needs to be inferred from the environment
+    window: Option<Duration>,
 }
 
 impl Limit {
-    pub fn new(value: &str, window: Duration) -> Result<Self> {
+    pub fn new(value: &str, window: Option<Duration>) -> Result<Self> {
         Ok(Self {
             count: to_usize(value)?,
             window,
@@ -144,9 +203,8 @@ impl RateLimit {
     pub fn new(raw: &str) -> std::result::Result<Self, RateLimitError> {
         let headers = HeaderMap::new(raw);
 
-        let raw_limit =
-            Self::get_rate_limit_header(&headers).ok_or(RateLimitError::MissingLimit)?;
-        let limit = RateLimit::parse_limit(raw_limit, Duration::HOUR)?;
+        let (value, variant) = Self::get_rate_limit_header(&headers)?;
+        let limit = RateLimit::parse_limit(value, variant.duration)?;
 
         let raw_remaining = headers
             .get(HEADER_REMAINING)
@@ -165,8 +223,17 @@ impl RateLimit {
         })
     }
 
-    fn get_rate_limit_header<'a>(headers: &'a HeaderMap) -> Option<&'a String> {
-        headers.get(HEADER_RATE_LIMIT)
+    fn get_rate_limit_header<'a>(header_map: &'a HeaderMap) -> Result<(&String, HeaderVariant)> {
+        let variants = HEADERS_RATE_LIMIT
+            .lock()
+            .map_err(|_| RateLimitError::Lock)?;
+
+        for variant in variants.iter() {
+            if let Some(value) = header_map.get(&variant.name) {
+                return Ok((value, variant.clone()));
+            }
+        }
+        Err(RateLimitError::MissingLimit)
     }
 
     pub fn limit(&self) -> Limit {
@@ -181,7 +248,7 @@ impl RateLimit {
         self.reset
     }
 
-    fn parse_limit<T: AsRef<str>>(value: T, duration: Duration) -> Result<Limit> {
+    fn parse_limit<T: AsRef<str>>(value: T, duration: Option<Duration>) -> Result<Limit> {
         Limit::new(value.as_ref(), duration)
     }
 
@@ -201,15 +268,15 @@ mod tests {
 
     #[test]
     fn parse_limit_value() {
-        let limit = Limit::new("  23 ", Duration::new(1, 0)).unwrap();
+        let limit = Limit::new("  23 ", None).unwrap();
         assert_eq!(limit.count, 23);
     }
 
     #[test]
     fn parse_invalid_limit_value() {
-        assert!(Limit::new("foo", Duration::ZERO).is_err());
-        assert!(Limit::new("0 foo", Duration::ZERO).is_err());
-        assert!(Limit::new("bar 0", Duration::ZERO).is_err());
+        assert!(Limit::new("foo", None).is_err());
+        assert!(Limit::new("0 foo", None).is_err());
+        assert!(Limit::new("bar 0", None).is_err());
     }
 
     #[test]
@@ -273,7 +340,7 @@ x-ratelimit-reset: 1350085394
             rate.limit(),
             Limit {
                 count: 5000,
-                window: Duration::HOUR
+                window: Some(Duration::HOUR)
             }
         );
         assert_eq!(

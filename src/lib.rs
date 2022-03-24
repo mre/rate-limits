@@ -11,7 +11,7 @@ use std::{collections::HashMap, num::ParseIntError};
 
 use displaydoc::Display;
 use thiserror::Error;
-use time::OffsetDateTime;
+use time::{Duration, OffsetDateTime};
 
 // Github
 // x-ratelimit-limit	    The maximum number of requests you're permitted to make per hour.
@@ -62,30 +62,42 @@ fn to_i64(value: &str) -> Result<i64> {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Limit(usize);
+pub struct Limit {
+    count: usize,
+    window: Duration,
+}
 
 impl Limit {
-    pub fn new(value: &str) -> Result<Self> {
-        Ok(Self(to_usize(value)?))
+    pub fn new(value: &str, window: Duration) -> Result<Self> {
+        Ok(Self {
+            count: to_usize(value)?,
+            window,
+        })
     }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Remaining(usize);
+pub struct Remaining {
+    count: usize,
+    window: Duration,
+}
 
 impl Remaining {
-    pub fn new(value: &str) -> Result<Self> {
-        Ok(Self(to_usize(value)?))
+    pub fn new(value: &str, window: Duration) -> Result<Self> {
+        Ok(Self {
+            count: to_usize(value)?,
+            window,
+        })
     }
 }
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Reset(OffsetDateTime);
 
 impl Reset {
     pub fn new(value: &str) -> Result<Self> {
         Ok(Self(
-            OffsetDateTime::from_unix_timestamp(to_i64(value)?)
-                .map_err(|e| RateLimitError::Time(e))?,
+            OffsetDateTime::from_unix_timestamp(to_i64(value)?).map_err(RateLimitError::Time)?,
         ))
     }
 }
@@ -106,6 +118,7 @@ impl HeaderMap {
         }
     }
 
+    #[cfg(test)]
     fn len(&self) -> usize {
         self.inner.len()
     }
@@ -133,12 +146,12 @@ impl RateLimit {
 
         let raw_limit =
             Self::get_rate_limit_header(&headers).ok_or(RateLimitError::MissingLimit)?;
-        let limit = RateLimit::parse_limit(raw_limit)?;
+        let limit = RateLimit::parse_limit(raw_limit, Duration::HOUR)?;
 
         let raw_remaining = headers
             .get(HEADER_REMAINING)
             .ok_or(RateLimitError::MissingRemaining)?;
-        let remaining = RateLimit::parse_remaining(raw_remaining)?;
+        let remaining = RateLimit::parse_remaining(raw_remaining, Duration::HOUR)?;
 
         let raw_reset = headers
             .get(HEADER_RESET)
@@ -168,12 +181,12 @@ impl RateLimit {
         self.reset
     }
 
-    fn parse_limit<T: AsRef<str>>(value: T) -> Result<Limit> {
-        Limit::new(value.as_ref())
+    fn parse_limit<T: AsRef<str>>(value: T, duration: Duration) -> Result<Limit> {
+        Limit::new(value.as_ref(), duration)
     }
 
-    fn parse_remaining<T: AsRef<str>>(value: T) -> Result<Remaining> {
-        Remaining::new(value.as_ref())
+    fn parse_remaining<T: AsRef<str>>(value: T, duration: Duration) -> Result<Remaining> {
+        Remaining::new(value.as_ref(), duration)
     }
 
     fn parse_reset<T: AsRef<str>>(value: T) -> Result<Reset> {
@@ -183,34 +196,33 @@ impl RateLimit {
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
 
     #[test]
     fn parse_limit_value() {
-        assert_eq!(Limit::new("0").unwrap(), Limit(0));
-        assert_eq!(Limit::new("  0").unwrap(), Limit(0));
-        assert_eq!(Limit::new("0  ").unwrap(), Limit(0));
+        let limit = Limit::new("  23 ", Duration::new(1, 0)).unwrap();
+        assert_eq!(limit.count, 23);
     }
 
     #[test]
     fn parse_invalid_limit_value() {
-        assert!(Limit::new("foo").is_err());
-        assert!(Limit::new("0 foo").is_err());
-        assert!(Limit::new("bar 0").is_err());
+        assert!(Limit::new("foo", Duration::ZERO).is_err());
+        assert!(Limit::new("0 foo", Duration::ZERO).is_err());
+        assert!(Limit::new("bar 0", Duration::ZERO).is_err());
     }
 
     #[test]
     fn parse_remaining_value() {
-        assert_eq!(Remaining::new("0").unwrap(), Remaining(0));
-        assert_eq!(Remaining::new("  0").unwrap(), Remaining(0));
-        assert_eq!(Remaining::new("0  ").unwrap(), Remaining(0));
+        let remaining = Remaining::new("  23 ", Duration::new(1, 0)).unwrap();
+        assert_eq!(remaining.count, 23);
     }
 
     #[test]
     fn parse_invalid_remaining_value() {
-        assert!(Remaining::new("foo").is_err());
-        assert!(Remaining::new("0 foo").is_err());
-        assert!(Remaining::new("bar 0").is_err());
+        assert!(Remaining::new("foo", Duration::ZERO).is_err());
+        assert!(Remaining::new("0 foo", Duration::ZERO).is_err());
+        assert!(Remaining::new("bar 0", Duration::ZERO).is_err());
     }
 
     #[test]
@@ -257,8 +269,20 @@ x-ratelimit-reset: 1350085394
         ";
 
         let rate = RateLimit::new(headers).unwrap();
-        assert_eq!(rate.limit(), Limit(5000));
-        assert_eq!(rate.remaining(), Remaining(4987));
+        assert_eq!(
+            rate.limit(),
+            Limit {
+                count: 5000,
+                window: Duration::HOUR
+            }
+        );
+        assert_eq!(
+            rate.remaining(),
+            Remaining {
+                count: 4987,
+                window: Duration::HOUR
+            }
+        );
         assert_eq!(
             rate.reset(),
             Reset(OffsetDateTime::from_unix_timestamp(1350085394).unwrap())

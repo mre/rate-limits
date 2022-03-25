@@ -3,7 +3,7 @@
 //! A crate for parsing HTTP rate limit headers as per the [IETF draft][draft].
 //! Inofficial implementations like the [Github rate limit headers][github] are
 //! also supported on a best effort basis.
-//! 
+//!
 //! Other resources:
 //! * https://stackoverflow.com/a/16022625/270334
 //!
@@ -29,9 +29,9 @@ use time::{Duration, OffsetDateTime};
 // x-rate-limit-reset:      the remaining window before the rate limit resets, in UTC epoch seconds
 
 // Vimeo
-// X-RateLimit-Limit	 The maximum number of API responses that the requester can make through your app in any given 60-second period.*
-// X-RateLimit-Remaining The remaining number of API responses that the requester can make through your app in the current 60-second period.*
-// X-RateLimit-Reset	 A datetime value indicating when the next 60-second period begins.
+// X-RateLimit-Limit	    The maximum number of API responses that the requester can make through your app in any given 60-second period.*
+// X-RateLimit-Remaining    The remaining number of API responses that the requester can make through your app in the current 60-second period.*
+// X-RateLimit-Reset	    A datetime value indicating when the next 60-second period begins.
 
 #[derive(Clone, Debug, PartialEq)]
 enum Vendor {
@@ -42,13 +42,13 @@ enum Vendor {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-struct HeaderVariant {
+struct RateLimitVariant {
     name: String,
     duration: Option<Duration>,
     vendor: Vendor,
 }
 
-impl HeaderVariant {
+impl RateLimitVariant {
     fn new(name: String, duration: Option<Duration>, vendor: Vendor) -> Self {
         Self {
             name,
@@ -58,24 +58,24 @@ impl HeaderVariant {
     }
 }
 
-static HEADERS_RATE_LIMIT: Lazy<Mutex<Vec<HeaderVariant>>> = Lazy::new(|| {
+static HEADERS_RATE_LIMIT: Lazy<Mutex<Vec<RateLimitVariant>>> = Lazy::new(|| {
     let mut v = Vec::new();
-    v.push(HeaderVariant::new(
+    v.push(RateLimitVariant::new(
         "RateLimit-Limit".to_string(),
         None,
         Vendor::Standard,
     ));
-    v.push(HeaderVariant::new(
+    v.push(RateLimitVariant::new(
         "x-ratelimit-limit".to_string(),
         Some(Duration::HOUR),
         Vendor::Github,
     ));
-    v.push(HeaderVariant::new(
+    v.push(RateLimitVariant::new(
         "x-rate-limit-limit".to_string(),
         Some(Duration::minutes(15)),
         Vendor::Twitter,
     ));
-    v.push(HeaderVariant::new(
+    v.push(RateLimitVariant::new(
         "X-RateLimit-Limit".to_string(),
         Some(Duration::seconds(60)),
         Vendor::Vimeo,
@@ -140,7 +140,9 @@ impl Limit {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Remaining {
+    /// Number of remaining requests for the given interval
     count: usize,
+    /// The time window until the rate limit is lifted.
     window: Duration,
 }
 
@@ -226,7 +228,7 @@ impl RateLimit {
         })
     }
 
-    fn get_rate_limit_header<'a>(header_map: &'a HeaderMap) -> Result<(&String, HeaderVariant)> {
+    fn get_rate_limit_header<'a>(header_map: &'a HeaderMap) -> Result<(&String, RateLimitVariant)> {
         let variants = HEADERS_RATE_LIMIT
             .lock()
             .map_err(|_| RateLimitError::Lock)?;

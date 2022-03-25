@@ -16,21 +16,6 @@ use std::sync::Mutex;
 use thiserror::Error;
 use time::{Duration, OffsetDateTime};
 
-// Github
-// x-ratelimit-limit	    The maximum number of requests you're permitted to make per hour.
-// x-ratelimit-remaining	The number of requests remaining in the current rate limit window.
-// x-ratelimit-reset	    The time at which the current rate limit window resets in UTC epoch seconds.
-
-// Twitter
-// x-rate-limit-limit:      the rate limit ceiling for that given endpoint
-// x-rate-limit-remaining:  the number of requests left for the 15-minute window
-// x-rate-limit-reset:      the remaining window before the rate limit resets, in UTC epoch seconds
-
-// Vimeo
-// X-RateLimit-Limit	    The maximum number of API responses that the requester can make through your app in any given 60-second period.*
-// X-RateLimit-Remaining    The remaining number of API responses that the requester can make through your app in the current 60-second period.*
-// X-RateLimit-Reset	    A datetime value indicating when the next 60-second period begins.
-
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum Vendor {
     Standard,
@@ -41,49 +26,84 @@ pub enum Vendor {
 
 #[derive(Clone, Debug, PartialEq)]
 struct RateLimitVariant {
-    name: String,
+    limit: String,
+    remaining: String,
+    reset: String,
     duration: Option<Duration>,
     vendor: Vendor,
 }
 
 impl RateLimitVariant {
-    fn new(name: String, duration: Option<Duration>, vendor: Vendor) -> Self {
+    fn new(
+        limit: String,
+        remaining: String,
+        reset: String,
+        duration: Option<Duration>,
+        vendor: Vendor,
+    ) -> Self {
         Self {
-            name,
+            limit,
+            remaining,
+            reset,
             duration,
             vendor,
         }
     }
 }
 
-static HEADERS_RATE_LIMIT: Lazy<Mutex<Vec<RateLimitVariant>>> = Lazy::new(|| {
+static RATE_LIMIT_HEADERS: Lazy<Mutex<Vec<RateLimitVariant>>> = Lazy::new(|| {
     let mut v = Vec::new();
+
+    // Headers as defined in https://tools.ietf.org/id/draft-polli-ratelimit-headers-00.html
+    // RateLimit-Limit:     containing the requests quota in the time window;
+    // RateLimit-Remaining: containing the remaining requests quota in the current window;
+    // RateLimit-Reset:     containing the time remaining in the current window, specified in seconds or as a timestamp;
     v.push(RateLimitVariant::new(
         "RateLimit-Limit".to_string(),
+        "Ratelimit-Remaining".to_string(),
+        "Ratelimit-Reset".to_string(),
         None,
         Vendor::Standard,
     ));
+
+    // Github
+    // x-ratelimit-limit	    The maximum number of requests you're permitted to make per hour.
+    // x-ratelimit-remaining	The number of requests remaining in the current rate limit window.
+    // x-ratelimit-reset	    The time at which the current rate limit window resets in UTC epoch seconds.
     v.push(RateLimitVariant::new(
         "x-ratelimit-limit".to_string(),
+        "x-ratelimit-remaining".to_string(),
+        "x-ratelimit-reset".to_string(),
         Some(Duration::HOUR),
         Vendor::Github,
     ));
+
+    // Twitter
+    // x-rate-limit-limit:      the rate limit ceiling for that given endpoint
+    // x-rate-limit-remaining:  the number of requests left for the 15-minute window
+    // x-rate-limit-reset:      the remaining window before the rate limit resets, in UTC epoch seconds
     v.push(RateLimitVariant::new(
         "x-rate-limit-limit".to_string(),
+        "x-rate-limit-remaining".to_string(),
+        "x-rate-limit-reset".to_string(),
         Some(Duration::minutes(15)),
         Vendor::Twitter,
     ));
+
+    // Vimeo
+    // X-RateLimit-Limit	    The maximum number of API responses that the requester can make through your app in any given 60-second period.*
+    // X-RateLimit-Remaining    The remaining number of API responses that the requester can make through your app in the current 60-second period.*
+    // X-RateLimit-Reset	    A datetime value indicating when the next 60-second period begins.
     v.push(RateLimitVariant::new(
         "X-RateLimit-Limit".to_string(),
+        "X-RateLimit-Remaining".to_string(),
+        "X-RateLimit-Reset".to_string(),
         Some(Duration::seconds(60)),
         Vendor::Vimeo,
     ));
 
     Mutex::new(v)
 });
-
-const HEADER_REMAINING: &str = "x-ratelimit-remaining";
-const HEADER_RESET: &str = "x-ratelimit-reset";
 
 /// Error variants while parsing the rate limit headers
 #[derive(Display, Debug, Error)]
@@ -139,19 +159,16 @@ impl Limit {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Remaining {
     /// Number of remaining requests for the given interval
     count: usize,
-    /// The time window until the rate limit is lifted.
-    window: Duration,
 }
 
 impl Remaining {
-    pub fn new(value: &str, window: Duration) -> Result<Self> {
+    pub fn new(value: &str) -> Result<Self> {
         Ok(Self {
             count: to_usize(value)?,
-            window,
         })
     }
 }
@@ -212,15 +229,11 @@ impl RateLimit {
         let (value, variant) = Self::get_rate_limit_header(&headers)?;
         let limit = Limit::new(value.as_ref(), variant.duration, Some(variant.vendor))?;
 
-        let raw_remaining = headers
-            .get(HEADER_REMAINING)
-            .ok_or(RateLimitError::MissingRemaining)?;
-        let remaining = RateLimit::parse_remaining(raw_remaining, Duration::HOUR)?;
+        let value = Self::get_remaining_header(&headers)?;
+        let remaining = Remaining::new(value.as_ref())?;
 
-        let raw_reset = headers
-            .get(HEADER_RESET)
-            .ok_or(RateLimitError::MissingReset)?;
-        let reset = RateLimit::parse_reset(raw_reset)?;
+        let value = Self::get_reset_header(&headers)?;
+        let reset = RateLimit::parse_reset(value)?;
 
         Ok(RateLimit {
             limit,
@@ -230,16 +243,42 @@ impl RateLimit {
     }
 
     fn get_rate_limit_header<'a>(header_map: &'a HeaderMap) -> Result<(&String, RateLimitVariant)> {
-        let variants = HEADERS_RATE_LIMIT
+        let variants = RATE_LIMIT_HEADERS
             .lock()
             .map_err(|_| RateLimitError::Lock)?;
 
         for variant in variants.iter() {
-            if let Some(value) = header_map.get(&variant.name) {
+            if let Some(value) = header_map.get(&variant.limit) {
                 return Ok((value, variant.clone()));
             }
         }
         Err(RateLimitError::MissingLimit)
+    }
+
+    fn get_remaining_header<'a>(header_map: &'a HeaderMap) -> Result<&String> {
+        let variants = RATE_LIMIT_HEADERS
+            .lock()
+            .map_err(|_| RateLimitError::Lock)?;
+
+        for variant in variants.iter() {
+            if let Some(value) = header_map.get(&variant.remaining) {
+                return Ok(value);
+            }
+        }
+        Err(RateLimitError::MissingRemaining)
+    }
+
+    fn get_reset_header<'a>(header_map: &'a HeaderMap) -> Result<&String> {
+        let variants = RATE_LIMIT_HEADERS
+            .lock()
+            .map_err(|_| RateLimitError::Lock)?;
+
+        for variant in variants.iter() {
+            if let Some(value) = header_map.get(&variant.reset) {
+                return Ok(value);
+            }
+        }
+        Err(RateLimitError::MissingRemaining)
     }
 
     pub fn limit(&self) -> Limit {
@@ -252,10 +291,6 @@ impl RateLimit {
 
     pub fn reset(&self) -> Reset {
         self.reset
-    }
-
-    fn parse_remaining<T: AsRef<str>>(value: T, duration: Duration) -> Result<Remaining> {
-        Remaining::new(value.as_ref(), duration)
     }
 
     fn parse_reset<T: AsRef<str>>(value: T) -> Result<Reset> {
@@ -294,15 +329,15 @@ mod tests {
 
     #[test]
     fn parse_remaining_value() {
-        let remaining = Remaining::new("  23 ", Duration::new(1, 0)).unwrap();
+        let remaining = Remaining::new("  23 ").unwrap();
         assert_eq!(remaining.count, 23);
     }
 
     #[test]
     fn parse_invalid_remaining_value() {
-        assert!(Remaining::new("foo", Duration::ZERO).is_err());
-        assert!(Remaining::new("0 foo", Duration::ZERO).is_err());
-        assert!(Remaining::new("bar 0", Duration::ZERO).is_err());
+        assert!(Remaining::new("foo").is_err());
+        assert!(Remaining::new("0 foo").is_err());
+        assert!(Remaining::new("bar 0").is_err());
     }
 
     #[test]
@@ -357,13 +392,7 @@ x-ratelimit-reset: 1350085394
                 vendor: Some(Vendor::Github)
             }
         );
-        assert_eq!(
-            rate.remaining(),
-            Remaining {
-                count: 4987,
-                window: Duration::HOUR
-            }
-        );
+        assert_eq!(rate.remaining(), Remaining { count: 4987 });
         assert_eq!(
             rate.reset(),
             Reset(OffsetDateTime::from_unix_timestamp(1350085394).unwrap())

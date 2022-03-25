@@ -31,8 +31,8 @@ use time::{Duration, OffsetDateTime};
 // X-RateLimit-Remaining    The remaining number of API responses that the requester can make through your app in the current 60-second period.*
 // X-RateLimit-Reset	    A datetime value indicating when the next 60-second period begins.
 
-#[derive(Clone, Debug, PartialEq)]
-enum Vendor {
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum Vendor {
     Standard,
     Twitter,
     Github,
@@ -117,7 +117,7 @@ fn to_i64(value: &str) -> Result<i64> {
     Ok(value.trim().parse::<i64>()?)
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Limit {
     /// Maximum number of requests for the given interval
     count: usize,
@@ -125,13 +125,16 @@ pub struct Limit {
     /// It is optional, because it might not be given,
     /// in which case it needs to be inferred from the environment
     window: Option<Duration>,
+    /// Predicted vendor based on rate limit header
+    vendor: Option<Vendor>,
 }
 
 impl Limit {
-    pub fn new(value: &str, window: Option<Duration>) -> Result<Self> {
+    pub fn new(value: &str, window: Option<Duration>, vendor: Option<Vendor>) -> Result<Self> {
         Ok(Self {
             count: to_usize(value)?,
             window,
+            vendor,
         })
     }
 }
@@ -207,7 +210,7 @@ impl RateLimit {
         let headers = HeaderMap::new(raw);
 
         let (value, variant) = Self::get_rate_limit_header(&headers)?;
-        let limit = RateLimit::parse_limit(value, variant.duration)?;
+        let limit = Limit::new(value.as_ref(), variant.duration, Some(variant.vendor))?;
 
         let raw_remaining = headers
             .get(HEADER_REMAINING)
@@ -251,10 +254,6 @@ impl RateLimit {
         self.reset
     }
 
-    fn parse_limit<T: AsRef<str>>(value: T, duration: Option<Duration>) -> Result<Limit> {
-        Limit::new(value.as_ref(), duration)
-    }
-
     fn parse_remaining<T: AsRef<str>>(value: T, duration: Duration) -> Result<Remaining> {
         Remaining::new(value.as_ref(), duration)
     }
@@ -271,15 +270,26 @@ mod tests {
 
     #[test]
     fn parse_limit_value() {
-        let limit = Limit::new("  23 ", None).unwrap();
+        let limit = Limit::new("  23 ", None, None).unwrap();
         assert_eq!(limit.count, 23);
     }
 
     #[test]
     fn parse_invalid_limit_value() {
-        assert!(Limit::new("foo", None).is_err());
-        assert!(Limit::new("0 foo", None).is_err());
-        assert!(Limit::new("bar 0", None).is_err());
+        assert!(Limit::new("foo", None, None).is_err());
+        assert!(Limit::new("0 foo", None, None).is_err());
+        assert!(Limit::new("bar 0", None, None).is_err());
+    }
+
+    #[test]
+    fn parse_vendor() {
+        let map = HeaderMap::new("x-ratelimit-limit: 5000");
+        let (_, variant) = RateLimit::get_rate_limit_header(&map).unwrap();
+        assert_eq!(variant.vendor, Vendor::Github);
+
+        let map = HeaderMap::new("RateLimit-Limit: 5000");
+        let (_, variant) = RateLimit::get_rate_limit_header(&map).unwrap();
+        assert_eq!(variant.vendor, Vendor::Standard);
     }
 
     #[test]
@@ -343,7 +353,8 @@ x-ratelimit-reset: 1350085394
             rate.limit(),
             Limit {
                 count: 5000,
-                window: Some(Duration::HOUR)
+                window: Some(Duration::HOUR),
+                vendor: Some(Vendor::Github)
             }
         );
         assert_eq!(

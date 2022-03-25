@@ -1,7 +1,5 @@
 # rate-limit
 
-## rate-limit
-
 A crate for parsing HTTP rate limit headers as per the [IETF draft][draft].
 Inofficial implementations like the [Github rate limit headers][github] are
 also supported on a best effort basis.

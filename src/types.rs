@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::convert;
 use crate::error::{Error, Result};
 use time::{Duration, OffsetDateTime, PrimitiveDateTime};
@@ -32,7 +34,7 @@ impl ResetTime {
             ResetTimeKind::ImfFixdate => {
                 let d =
                     PrimitiveDateTime::parse(value, &time::format_description::well_known::Rfc2822)
-                        .map_err(|e| Error::Parse(e))?;
+                        .map_err(Error::Parse)?;
                 Ok(ResetTime::DateTime(d.assume_utc()))
             }
         }
@@ -83,5 +85,67 @@ impl RateLimitVariant {
             reset_header,
             reset_kind,
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Limit {
+    /// Maximum number of requests for the given interval
+    pub count: usize,
+    /// The time window until the rate limit is lifted.
+    /// It is optional, because it might not be given,
+    /// in which case it needs to be inferred from the environment
+    pub window: Option<Duration>,
+    /// Predicted vendor based on rate limit header
+    pub vendor: Option<Vendor>,
+}
+
+impl Limit {
+    pub fn new(value: &str, window: Option<Duration>, vendor: Option<Vendor>) -> Result<Self> {
+        Ok(Self {
+            count: convert::to_usize(value)?,
+            window,
+            vendor,
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Remaining {
+    /// Number of remaining requests for the given interval
+    pub count: usize,
+}
+
+impl Remaining {
+    pub fn new(value: &str) -> Result<Self> {
+        Ok(Self {
+            count: convert::to_usize(value)?,
+        })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HeaderMap {
+    inner: HashMap<String, String>,
+}
+
+impl HeaderMap {
+    pub fn new(headers: &str) -> Self {
+        HeaderMap {
+            inner: headers
+                .lines()
+                .filter_map(|line| line.split_once(':'))
+                .map(|(header, value)| (header.to_lowercase(), value.trim().to_lowercase()))
+                .collect(),
+        }
+    }
+
+    #[cfg(test)]
+    pub fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    pub fn get(&self, k: &str) -> Option<&String> {
+        self.inner.get(&k.to_lowercase())
     }
 }

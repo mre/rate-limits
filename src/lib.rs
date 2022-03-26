@@ -15,10 +15,9 @@ mod types;
 use error::{Error, Result};
 
 use once_cell::sync::Lazy;
-use std::collections::HashMap;
 use std::sync::Mutex;
 use time::Duration;
-use types::{RateLimitVariant, ResetTime, ResetTimeKind, Vendor};
+use types::{HeaderMap, Limit, RateLimitVariant, Remaining, ResetTime, ResetTimeKind, Vendor};
 
 static RATE_LIMIT_HEADERS: Lazy<Mutex<Vec<RateLimitVariant>>> = Lazy::new(|| {
     let v = vec![
@@ -74,68 +73,6 @@ static RATE_LIMIT_HEADERS: Lazy<Mutex<Vec<RateLimitVariant>>> = Lazy::new(|| {
 
     Mutex::new(v)
 });
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Limit {
-    /// Maximum number of requests for the given interval
-    count: usize,
-    /// The time window until the rate limit is lifted.
-    /// It is optional, because it might not be given,
-    /// in which case it needs to be inferred from the environment
-    window: Option<Duration>,
-    /// Predicted vendor based on rate limit header
-    vendor: Option<Vendor>,
-}
-
-impl Limit {
-    pub fn new(value: &str, window: Option<Duration>, vendor: Option<Vendor>) -> Result<Self> {
-        Ok(Self {
-            count: convert::to_usize(value)?,
-            window,
-            vendor,
-        })
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Remaining {
-    /// Number of remaining requests for the given interval
-    count: usize,
-}
-
-impl Remaining {
-    pub fn new(value: &str) -> Result<Self> {
-        Ok(Self {
-            count: convert::to_usize(value)?,
-        })
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct HeaderMap {
-    inner: HashMap<String, String>,
-}
-
-impl HeaderMap {
-    fn new(headers: &str) -> Self {
-        HeaderMap {
-            inner: headers
-                .lines()
-                .filter_map(|line| line.split_once(':'))
-                .map(|(header, value)| (header.to_lowercase(), value.trim().to_lowercase()))
-                .collect(),
-        }
-    }
-
-    #[cfg(test)]
-    fn len(&self) -> usize {
-        self.inner.len()
-    }
-
-    fn get(&self, k: &str) -> Option<&String> {
-        self.inner.get(&k.to_lowercase())
-    }
-}
 
 /// HTTP rate limits as parsed from header values
 pub struct RateLimit {

@@ -5,10 +5,10 @@
 //! ```rust
 //! use indoc::indoc;
 //! use time::{OffsetDateTime, Duration};
-//! use rate_limit::{Vendor, RateLimit, Limit, Remaining, ResetTime};
+//! use rate_limit::{Vendor, RateLimit, ResetTime};
 //!
-//! let headers = indoc! {
-//!     "x-ratelimit-limit: 5000
+//! let headers = indoc! {"
+//!     x-ratelimit-limit: 5000
 //!     x-ratelimit-remaining: 4987
 //!     x-ratelimit-reset: 1350085394
 //! "};
@@ -16,15 +16,13 @@
 //! assert_eq!(
 //!     RateLimit::new(headers).unwrap(),
 //!     RateLimit {
-//!         limit: Limit {
-//!             count: 5000,
-//!             window: Some(Duration::HOUR),
-//!             vendor: Some(Vendor::Github)
-//!         },
-//!         remaining: Remaining { count: 4987 },
+//!         limit: 5000,
+//!         remaining: 4987,
 //!         reset: ResetTime::DateTime(
 //!             OffsetDateTime::from_unix_timestamp(1350085394).unwrap()
-//!         )
+//!         ),
+//!         window: Some(Duration::HOUR),
+//!         vendor: Vendor::Github
 //!     },
 //! );
 //! ```
@@ -104,9 +102,15 @@ static RATE_LIMIT_HEADERS: Lazy<Mutex<Vec<RateLimitVariant>>> = Lazy::new(|| {
 /// HTTP rate limits as parsed from header values
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct RateLimit {
-    pub limit: Limit,
-    pub remaining: Remaining,
+    pub limit: usize,
+    pub remaining: usize,
     pub reset: ResetTime,
+    /// The time window until the rate limit is lifted.
+    /// It is optional, because it might not be given,
+    /// in which case it needs to be inferred from the environment
+    pub window: Option<Duration>,
+    /// Predicted vendor based on rate limit header
+    pub vendor: Vendor,
 }
 
 impl RateLimit {
@@ -119,7 +123,7 @@ impl RateLimit {
         let headers = HeaderMap::new(raw);
 
         let (value, variant) = Self::get_rate_limit_header(&headers)?;
-        let limit = Limit::new(value.as_ref(), variant.duration, Some(variant.vendor))?;
+        let limit = Limit::new(value.as_ref())?;
 
         let value = Self::get_remaining_header(&headers)?;
         let remaining = Remaining::new(value.as_ref())?;
@@ -128,9 +132,11 @@ impl RateLimit {
         let reset = ResetTime::new(value, kind)?;
 
         Ok(RateLimit {
-            limit,
-            remaining,
+            limit: limit.count,
+            remaining: remaining.count,
             reset,
+            window: variant.duration,
+            vendor: variant.vendor,
         })
     }
 
@@ -167,11 +173,11 @@ impl RateLimit {
         Err(Error::MissingRemaining)
     }
 
-    pub fn limit(&self) -> Limit {
+    pub fn limit(&self) -> usize {
         self.limit
     }
 
-    pub fn remaining(&self) -> Remaining {
+    pub fn remaining(&self) -> usize {
         self.remaining
     }
 
@@ -188,15 +194,15 @@ mod tests {
 
     #[test]
     fn parse_limit_value() {
-        let limit = Limit::new("  23 ", None, None).unwrap();
+        let limit = Limit::new("  23 ").unwrap();
         assert_eq!(limit.count, 23);
     }
 
     #[test]
     fn parse_invalid_limit_value() {
-        assert!(Limit::new("foo", None, None).is_err());
-        assert!(Limit::new("0 foo", None, None).is_err());
-        assert!(Limit::new("bar 0", None, None).is_err());
+        assert!(Limit::new("foo").is_err());
+        assert!(Limit::new("0 foo").is_err());
+        assert!(Limit::new("bar 0").is_err());
     }
 
     #[test]
@@ -283,15 +289,8 @@ x-ratelimit-reset: 1350085394
         ";
 
         let rate = RateLimit::new(headers).unwrap();
-        assert_eq!(
-            rate.limit(),
-            Limit {
-                count: 5000,
-                window: Some(Duration::HOUR),
-                vendor: Some(Vendor::Github)
-            }
-        );
-        assert_eq!(rate.remaining(), Remaining { count: 4987 });
+        assert_eq!(rate.limit(), 5000);
+        assert_eq!(rate.remaining(), 4987);
         assert_eq!(
             rate.reset(),
             ResetTime::DateTime(OffsetDateTime::from_unix_timestamp(1350085394).unwrap())

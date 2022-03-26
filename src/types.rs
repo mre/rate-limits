@@ -92,20 +92,12 @@ impl RateLimitVariant {
 pub struct Limit {
     /// Maximum number of requests for the given interval
     pub count: usize,
-    /// The time window until the rate limit is lifted.
-    /// It is optional, because it might not be given,
-    /// in which case it needs to be inferred from the environment
-    pub window: Option<Duration>,
-    /// Predicted vendor based on rate limit header
-    pub vendor: Option<Vendor>,
 }
 
 impl Limit {
-    pub fn new(value: &str, window: Option<Duration>, vendor: Option<Vendor>) -> Result<Self> {
+    pub fn new(value: &str) -> Result<Self> {
         Ok(Self {
             count: convert::to_usize(value)?,
-            window,
-            vendor,
         })
     }
 }

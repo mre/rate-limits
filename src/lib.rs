@@ -25,14 +25,14 @@ pub enum ResetTimeKind {
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum ResetTime {
-    Seconds(u64),
+    Seconds(usize),
     DateTime(OffsetDateTime),
 }
 
 impl ResetTime {
     pub fn new(value: &str, kind: ResetTimeKind) -> Result<Self> {
         match kind {
-            ResetTimeKind::Seconds => todo!(),
+            ResetTimeKind::Seconds => Ok(ResetTime::Seconds(to_usize(value)?)),
             ResetTimeKind::Timestamp => Ok(Self::DateTime(
                 OffsetDateTime::from_unix_timestamp(to_i64(value)?)
                     .map_err(RateLimitError::Time)?,
@@ -356,10 +356,18 @@ mod tests {
     }
 
     #[test]
-    fn parse_reset_value() {
+    fn parse_reset_timestamp() {
         assert_eq!(
             ResetTime::new("1350085394", ResetTimeKind::Timestamp).unwrap(),
             ResetTime::DateTime(OffsetDateTime::from_unix_timestamp(1350085394).unwrap())
+        );
+    }
+
+    #[test]
+    fn parse_reset_seconds() {
+        assert_eq!(
+            ResetTime::new("100", ResetTimeKind::Seconds).unwrap(),
+            ResetTime::Seconds(100)
         );
     }
 

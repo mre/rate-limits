@@ -2,6 +2,33 @@
 //! Inofficial implementations like the [Github rate limit headers][github] are
 //! also supported on a best effort basis.
 //!
+//! ```rust
+//! use indoc::indoc;
+//! use time::{OffsetDateTime, Duration};
+//! use rate_limit::{Vendor, RateLimit, Limit, Remaining, ResetTime};
+//!
+//! let headers = indoc! {
+//!     "x-ratelimit-limit: 5000
+//!     x-ratelimit-remaining: 4987
+//!     x-ratelimit-reset: 1350085394
+//! "};
+//!
+//! assert_eq!(
+//!     RateLimit::new(headers).unwrap(),
+//!     RateLimit {
+//!         limit: Limit {
+//!             count: 5000,
+//!             window: Some(Duration::HOUR),
+//!             vendor: Some(Vendor::Github)
+//!         },
+//!         remaining: Remaining { count: 4987 },
+//!         reset: ResetTime::DateTime(
+//!             OffsetDateTime::from_unix_timestamp(1350085394).unwrap()
+//!         )
+//!     },
+//! );
+//! ```
+//!
 //! Other resources:
 //! * https://stackoverflow.com/a/16022625/270334
 //!
@@ -17,7 +44,7 @@ use error::{Error, Result};
 use once_cell::sync::Lazy;
 use std::sync::Mutex;
 use time::Duration;
-use types::{HeaderMap, Limit, RateLimitVariant, Remaining, ResetTime, ResetTimeKind, Vendor};
+pub use types::{HeaderMap, Limit, RateLimitVariant, Remaining, ResetTime, ResetTimeKind, Vendor};
 
 static RATE_LIMIT_HEADERS: Lazy<Mutex<Vec<RateLimitVariant>>> = Lazy::new(|| {
     let v = vec![
@@ -75,10 +102,11 @@ static RATE_LIMIT_HEADERS: Lazy<Mutex<Vec<RateLimitVariant>>> = Lazy::new(|| {
 });
 
 /// HTTP rate limits as parsed from header values
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct RateLimit {
-    limit: Limit,
-    remaining: Remaining,
-    reset: ResetTime,
+    pub limit: Limit,
+    pub remaining: Remaining,
+    pub reset: ResetTime,
 }
 
 impl RateLimit {

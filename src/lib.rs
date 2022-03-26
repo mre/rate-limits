@@ -14,13 +14,13 @@ use std::{collections::HashMap, num::ParseIntError};
 use displaydoc::Display;
 use once_cell::sync::Lazy;
 use thiserror::Error;
-use time::{Duration, OffsetDateTime};
+use time::{Duration, OffsetDateTime, PrimitiveDateTime};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ResetTimeKind {
     Seconds,
     Timestamp,
-    DateTime,
+    ImfFixdate,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -37,7 +37,12 @@ impl ResetTime {
                 OffsetDateTime::from_unix_timestamp(to_i64(value)?)
                     .map_err(RateLimitError::Time)?,
             )),
-            ResetTimeKind::DateTime => todo!(),
+            ResetTimeKind::ImfFixdate => {
+                let d =
+                    PrimitiveDateTime::parse(value, &time::format_description::well_known::Rfc2822)
+                        .map_err(|e| RateLimitError::Parse(e))?;
+                Ok(ResetTime::DateTime(d.assume_utc()))
+            }
         }
     }
 }
@@ -127,7 +132,7 @@ static RATE_LIMIT_HEADERS: Lazy<Mutex<Vec<RateLimitVariant>>> = Lazy::new(|| {
             "X-RateLimit-Limit".to_string(),
             "X-RateLimit-Remaining".to_string(),
             "X-RateLimit-Reset".to_string(),
-            ResetTimeKind::DateTime,
+            ResetTimeKind::ImfFixdate,
             Vendor::Vimeo,
         ),
     ];
@@ -152,6 +157,9 @@ pub enum RateLimitError {
 
     /// Cannot lock header map
     Lock,
+
+    /// Time Parsing error
+    Parse(#[from] time::error::Parse),
 
     /// Error parsing reset time: {0}
     Time(#[from] time::error::ComponentRange),
@@ -317,6 +325,7 @@ impl RateLimit {
 mod tests {
 
     use super::*;
+    use time::macros::datetime;
 
     #[test]
     fn parse_limit_value() {
@@ -368,6 +377,15 @@ mod tests {
         assert_eq!(
             ResetTime::new("100", ResetTimeKind::Seconds).unwrap(),
             ResetTime::Seconds(100)
+        );
+    }
+
+    #[test]
+    fn parse_reset_datetime() {
+        let d = ResetTime::new("Tue, 15 Nov 1994 08:12:31 GMT", ResetTimeKind::ImfFixdate);
+        assert_eq!(
+            d.unwrap(),
+            ResetTime::DateTime(datetime!(1994-11-15 8:12:31 UTC))
         );
     }
 

@@ -11,7 +11,7 @@
 mod convert;
 mod error;
 
-use error::Error;
+use error::{Error, Result};
 
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
@@ -25,9 +25,15 @@ pub enum ResetTimeKind {
     ImfFixdate,
 }
 
+/// Reset time of rate limiting
+///
+/// There are different variants on how to specify reset times
+/// in rate limit headers. The most common ones are seconds and datetime.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum ResetTime {
+    /// Number of seconds until rate limit is lifted
     Seconds(usize),
+    /// Date when rate limit will be lifted
     DateTime(OffsetDateTime),
 }
 
@@ -49,40 +55,49 @@ impl ResetTime {
     }
 }
 
+/// Known vendors of rate limit headers
+///
+/// Vendors use different rate limit header formats,
+/// which define how to parse them.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum Vendor {
+    /// Rate limit headers as defined in the `polli-ratelimit-headers-00` draft
     Standard,
+    /// Twitter API rate limit headers
     Twitter,
+    /// Github API rate limit headers
     Github,
+    /// Vimeo rate limit headers
     Vimeo,
 }
 
+/// A variant defines all relevant fields for parsing headers from a given vendor
 #[derive(Clone, Debug, PartialEq)]
 struct RateLimitVariant {
+    vendor: Vendor,
     duration: Option<Duration>,
     limit_header: String,
     remaining_header: String,
     reset_header: String,
     reset_kind: ResetTimeKind,
-    vendor: Vendor,
 }
 
 impl RateLimitVariant {
     fn new(
+        vendor: Vendor,
         duration: Option<Duration>,
         limit_header: String,
         remaining_header: String,
         reset_header: String,
         reset_kind: ResetTimeKind,
-        vendor: Vendor,
     ) -> Self {
         Self {
+            vendor,
             duration,
             limit_header,
             remaining_header,
             reset_header,
             reset_kind,
-            vendor,
         }
     }
 }
@@ -94,55 +109,53 @@ static RATE_LIMIT_HEADERS: Lazy<Mutex<Vec<RateLimitVariant>>> = Lazy::new(|| {
         // RateLimit-Remaining: containing the remaining requests quota in the current window;
         // RateLimit-Reset:     containing the time remaining in the current window, specified in seconds or as a timestamp;
         RateLimitVariant::new(
+            Vendor::Standard,
             None,
             "RateLimit-Limit".to_string(),
             "Ratelimit-Remaining".to_string(),
             "Ratelimit-Reset".to_string(),
             ResetTimeKind::Seconds,
-            Vendor::Standard,
         ),
         // Github
         // x-ratelimit-limit	    The maximum number of requests you're permitted to make per hour.
         // x-ratelimit-remaining	The number of requests remaining in the current rate limit window.
         // x-ratelimit-reset	    The time at which the current rate limit window resets in UTC epoch seconds.
         RateLimitVariant::new(
+            Vendor::Github,
             Some(Duration::HOUR),
             "x-ratelimit-limit".to_string(),
             "x-ratelimit-remaining".to_string(),
             "x-ratelimit-reset".to_string(),
             ResetTimeKind::Timestamp,
-            Vendor::Github,
         ),
         // Twitter
         // x-rate-limit-limit:      the rate limit ceiling for that given endpoint
         // x-rate-limit-remaining:  the number of requests left for the 15-minute window
         // x-rate-limit-reset:      the remaining window before the rate limit resets, in UTC epoch seconds
         RateLimitVariant::new(
+            Vendor::Twitter,
             Some(Duration::minutes(15)),
             "x-rate-limit-limit".to_string(),
             "x-rate-limit-remaining".to_string(),
             "x-rate-limit-reset".to_string(),
             ResetTimeKind::Timestamp,
-            Vendor::Twitter,
         ),
         // Vimeo
         // X-RateLimit-Limit	    The maximum number of API responses that the requester can make through your app in any given 60-second period.*
         // X-RateLimit-Remaining    The remaining number of API responses that the requester can make through your app in the current 60-second period.*
         // X-RateLimit-Reset	    A datetime value indicating when the next 60-second period begins.
         RateLimitVariant::new(
+            Vendor::Vimeo,
             Some(Duration::seconds(60)),
             "X-RateLimit-Limit".to_string(),
             "X-RateLimit-Remaining".to_string(),
             "X-RateLimit-Reset".to_string(),
             ResetTimeKind::ImfFixdate,
-            Vendor::Vimeo,
         ),
     ];
 
     Mutex::new(v)
 });
-
-type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Limit {

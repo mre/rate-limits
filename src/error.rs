@@ -27,3 +27,5 @@ pub enum Error {
     /// Error parsing reset time: {0}
     Time(#[from] time::error::ComponentRange),
 }
+
+pub(crate) type Result<T> = std::result::Result<T, Error>;

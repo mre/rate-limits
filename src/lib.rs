@@ -8,13 +8,39 @@
 //! [github]: https://docs.github.com/en/rest/overview/resources-in-the-rest-api
 //! [draft]: https://tools.ietf.org/id/draft-polli-ratelimit-headers-00.html
 
+use std::sync::Mutex;
 use std::{collections::HashMap, num::ParseIntError};
 
 use displaydoc::Display;
 use once_cell::sync::Lazy;
-use std::sync::Mutex;
 use thiserror::Error;
 use time::{Duration, OffsetDateTime};
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum ResetTimeKind {
+    Seconds,
+    Timestamp,
+    DateTime,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum ResetTime {
+    Seconds(u64),
+    DateTime(OffsetDateTime),
+}
+
+impl ResetTime {
+    pub fn new(value: &str, kind: ResetTimeKind) -> Result<Self> {
+        match kind {
+            ResetTimeKind::Seconds => todo!(),
+            ResetTimeKind::Timestamp => Ok(Self::DateTime(
+                OffsetDateTime::from_unix_timestamp(to_i64(value)?)
+                    .map_err(RateLimitError::Time)?,
+            )),
+            ResetTimeKind::DateTime => todo!(),
+        }
+    }
+}
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum Vendor {
@@ -26,81 +52,85 @@ pub enum Vendor {
 
 #[derive(Clone, Debug, PartialEq)]
 struct RateLimitVariant {
-    limit: String,
-    remaining: String,
-    reset: String,
     duration: Option<Duration>,
+    limit_header: String,
+    remaining_header: String,
+    reset_header: String,
+    reset_kind: ResetTimeKind,
     vendor: Vendor,
 }
 
 impl RateLimitVariant {
     fn new(
-        limit: String,
-        remaining: String,
-        reset: String,
         duration: Option<Duration>,
+        limit_header: String,
+        remaining_header: String,
+        reset_header: String,
+        reset_kind: ResetTimeKind,
         vendor: Vendor,
     ) -> Self {
         Self {
-            limit,
-            remaining,
-            reset,
             duration,
+            limit_header,
+            remaining_header,
+            reset_header,
+            reset_kind,
             vendor,
         }
     }
 }
 
 static RATE_LIMIT_HEADERS: Lazy<Mutex<Vec<RateLimitVariant>>> = Lazy::new(|| {
-    let mut v = Vec::new();
-
-    // Headers as defined in https://tools.ietf.org/id/draft-polli-ratelimit-headers-00.html
-    // RateLimit-Limit:     containing the requests quota in the time window;
-    // RateLimit-Remaining: containing the remaining requests quota in the current window;
-    // RateLimit-Reset:     containing the time remaining in the current window, specified in seconds or as a timestamp;
-    v.push(RateLimitVariant::new(
-        "RateLimit-Limit".to_string(),
-        "Ratelimit-Remaining".to_string(),
-        "Ratelimit-Reset".to_string(),
-        None,
-        Vendor::Standard,
-    ));
-
-    // Github
-    // x-ratelimit-limit	    The maximum number of requests you're permitted to make per hour.
-    // x-ratelimit-remaining	The number of requests remaining in the current rate limit window.
-    // x-ratelimit-reset	    The time at which the current rate limit window resets in UTC epoch seconds.
-    v.push(RateLimitVariant::new(
-        "x-ratelimit-limit".to_string(),
-        "x-ratelimit-remaining".to_string(),
-        "x-ratelimit-reset".to_string(),
-        Some(Duration::HOUR),
-        Vendor::Github,
-    ));
-
-    // Twitter
-    // x-rate-limit-limit:      the rate limit ceiling for that given endpoint
-    // x-rate-limit-remaining:  the number of requests left for the 15-minute window
-    // x-rate-limit-reset:      the remaining window before the rate limit resets, in UTC epoch seconds
-    v.push(RateLimitVariant::new(
-        "x-rate-limit-limit".to_string(),
-        "x-rate-limit-remaining".to_string(),
-        "x-rate-limit-reset".to_string(),
-        Some(Duration::minutes(15)),
-        Vendor::Twitter,
-    ));
-
-    // Vimeo
-    // X-RateLimit-Limit	    The maximum number of API responses that the requester can make through your app in any given 60-second period.*
-    // X-RateLimit-Remaining    The remaining number of API responses that the requester can make through your app in the current 60-second period.*
-    // X-RateLimit-Reset	    A datetime value indicating when the next 60-second period begins.
-    v.push(RateLimitVariant::new(
-        "X-RateLimit-Limit".to_string(),
-        "X-RateLimit-Remaining".to_string(),
-        "X-RateLimit-Reset".to_string(),
-        Some(Duration::seconds(60)),
-        Vendor::Vimeo,
-    ));
+    let v = vec![
+        // Headers as defined in https://tools.ietf.org/id/draft-polli-ratelimit-headers-00.html
+        // RateLimit-Limit:     containing the requests quota in the time window;
+        // RateLimit-Remaining: containing the remaining requests quota in the current window;
+        // RateLimit-Reset:     containing the time remaining in the current window, specified in seconds or as a timestamp;
+        RateLimitVariant::new(
+            None,
+            "RateLimit-Limit".to_string(),
+            "Ratelimit-Remaining".to_string(),
+            "Ratelimit-Reset".to_string(),
+            ResetTimeKind::Seconds,
+            Vendor::Standard,
+        ),
+        // Github
+        // x-ratelimit-limit	    The maximum number of requests you're permitted to make per hour.
+        // x-ratelimit-remaining	The number of requests remaining in the current rate limit window.
+        // x-ratelimit-reset	    The time at which the current rate limit window resets in UTC epoch seconds.
+        RateLimitVariant::new(
+            Some(Duration::HOUR),
+            "x-ratelimit-limit".to_string(),
+            "x-ratelimit-remaining".to_string(),
+            "x-ratelimit-reset".to_string(),
+            ResetTimeKind::Timestamp,
+            Vendor::Github,
+        ),
+        // Twitter
+        // x-rate-limit-limit:      the rate limit ceiling for that given endpoint
+        // x-rate-limit-remaining:  the number of requests left for the 15-minute window
+        // x-rate-limit-reset:      the remaining window before the rate limit resets, in UTC epoch seconds
+        RateLimitVariant::new(
+            Some(Duration::minutes(15)),
+            "x-rate-limit-limit".to_string(),
+            "x-rate-limit-remaining".to_string(),
+            "x-rate-limit-reset".to_string(),
+            ResetTimeKind::Timestamp,
+            Vendor::Twitter,
+        ),
+        // Vimeo
+        // X-RateLimit-Limit	    The maximum number of API responses that the requester can make through your app in any given 60-second period.*
+        // X-RateLimit-Remaining    The remaining number of API responses that the requester can make through your app in the current 60-second period.*
+        // X-RateLimit-Reset	    A datetime value indicating when the next 60-second period begins.
+        RateLimitVariant::new(
+            Some(Duration::seconds(60)),
+            "X-RateLimit-Limit".to_string(),
+            "X-RateLimit-Remaining".to_string(),
+            "X-RateLimit-Reset".to_string(),
+            ResetTimeKind::DateTime,
+            Vendor::Vimeo,
+        ),
+    ];
 
     Mutex::new(v)
 });
@@ -173,17 +203,6 @@ impl Remaining {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Reset(OffsetDateTime);
-
-impl Reset {
-    pub fn new(value: &str) -> Result<Self> {
-        Ok(Self(
-            OffsetDateTime::from_unix_timestamp(to_i64(value)?).map_err(RateLimitError::Time)?,
-        ))
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct HeaderMap {
     inner: HashMap<String, String>,
@@ -214,7 +233,7 @@ impl HeaderMap {
 pub struct RateLimit {
     limit: Limit,
     remaining: Remaining,
-    reset: Reset,
+    reset: ResetTime,
 }
 
 impl RateLimit {
@@ -232,8 +251,8 @@ impl RateLimit {
         let value = Self::get_remaining_header(&headers)?;
         let remaining = Remaining::new(value.as_ref())?;
 
-        let value = Self::get_reset_header(&headers)?;
-        let reset = RateLimit::parse_reset(value)?;
+        let (value, kind) = Self::get_reset_header(&headers)?;
+        let reset = ResetTime::new(value, kind)?;
 
         Ok(RateLimit {
             limit,
@@ -242,40 +261,40 @@ impl RateLimit {
         })
     }
 
-    fn get_rate_limit_header<'a>(header_map: &'a HeaderMap) -> Result<(&String, RateLimitVariant)> {
+    fn get_rate_limit_header(header_map: &HeaderMap) -> Result<(&String, RateLimitVariant)> {
         let variants = RATE_LIMIT_HEADERS
             .lock()
             .map_err(|_| RateLimitError::Lock)?;
 
         for variant in variants.iter() {
-            if let Some(value) = header_map.get(&variant.limit) {
+            if let Some(value) = header_map.get(&variant.limit_header) {
                 return Ok((value, variant.clone()));
             }
         }
         Err(RateLimitError::MissingLimit)
     }
 
-    fn get_remaining_header<'a>(header_map: &'a HeaderMap) -> Result<&String> {
+    fn get_remaining_header(header_map: &HeaderMap) -> Result<&String> {
         let variants = RATE_LIMIT_HEADERS
             .lock()
             .map_err(|_| RateLimitError::Lock)?;
 
         for variant in variants.iter() {
-            if let Some(value) = header_map.get(&variant.remaining) {
+            if let Some(value) = header_map.get(&variant.remaining_header) {
                 return Ok(value);
             }
         }
         Err(RateLimitError::MissingRemaining)
     }
 
-    fn get_reset_header<'a>(header_map: &'a HeaderMap) -> Result<&String> {
+    fn get_reset_header(header_map: &HeaderMap) -> Result<(&String, ResetTimeKind)> {
         let variants = RATE_LIMIT_HEADERS
             .lock()
             .map_err(|_| RateLimitError::Lock)?;
 
         for variant in variants.iter() {
-            if let Some(value) = header_map.get(&variant.reset) {
-                return Ok(value);
+            if let Some(value) = header_map.get(&variant.reset_header) {
+                return Ok((value, variant.reset_kind.clone()));
             }
         }
         Err(RateLimitError::MissingRemaining)
@@ -289,12 +308,8 @@ impl RateLimit {
         self.remaining
     }
 
-    pub fn reset(&self) -> Reset {
+    pub fn reset(&self) -> ResetTime {
         self.reset
-    }
-
-    fn parse_reset<T: AsRef<str>>(value: T) -> Result<Reset> {
-        Reset::new(value.as_ref())
     }
 }
 
@@ -343,8 +358,8 @@ mod tests {
     #[test]
     fn parse_reset_value() {
         assert_eq!(
-            Reset::new("1350085394").unwrap(),
-            Reset(OffsetDateTime::from_unix_timestamp(1350085394).unwrap())
+            ResetTime::new("1350085394", ResetTimeKind::Timestamp).unwrap(),
+            ResetTime::DateTime(OffsetDateTime::from_unix_timestamp(1350085394).unwrap())
         );
     }
 
@@ -366,7 +381,6 @@ x-ratelimit-reset: 1350085394
 ",
         );
 
-        println!("{map:?}");
         assert_eq!(map.len(), 3);
         assert_eq!(map.get("x-ratelimit-limit"), Some(&"5000".to_string()));
         assert_eq!(map.get("x-ratelimit-remaining"), Some(&"4987".to_string()));
@@ -395,7 +409,7 @@ x-ratelimit-reset: 1350085394
         assert_eq!(rate.remaining(), Remaining { count: 4987 });
         assert_eq!(
             rate.reset(),
-            Reset(OffsetDateTime::from_unix_timestamp(1350085394).unwrap())
+            ResetTime::DateTime(OffsetDateTime::from_unix_timestamp(1350085394).unwrap())
         );
     }
 }

@@ -8,6 +8,7 @@
 //! [github]: https://docs.github.com/en/rest/overview/resources-in-the-rest-api
 //! [draft]: https://tools.ietf.org/id/draft-polli-ratelimit-headers-00.html
 
+mod convert;
 mod error;
 
 use error::Error;
@@ -33,9 +34,9 @@ pub enum ResetTime {
 impl ResetTime {
     pub fn new(value: &str, kind: ResetTimeKind) -> Result<Self> {
         match kind {
-            ResetTimeKind::Seconds => Ok(ResetTime::Seconds(to_usize(value)?)),
+            ResetTimeKind::Seconds => Ok(ResetTime::Seconds(convert::to_usize(value)?)),
             ResetTimeKind::Timestamp => Ok(Self::DateTime(
-                OffsetDateTime::from_unix_timestamp(to_i64(value)?)
+                OffsetDateTime::from_unix_timestamp(convert::to_i64(value)?)
                     .map_err(Error::Time)?,
             )),
             ResetTimeKind::ImfFixdate => {
@@ -143,14 +144,6 @@ static RATE_LIMIT_HEADERS: Lazy<Mutex<Vec<RateLimitVariant>>> = Lazy::new(|| {
 
 type Result<T> = std::result::Result<T, Error>;
 
-fn to_usize(value: &str) -> Result<usize> {
-    Ok(value.trim().parse::<usize>()?)
-}
-
-fn to_i64(value: &str) -> Result<i64> {
-    Ok(value.trim().parse::<i64>()?)
-}
-
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Limit {
     /// Maximum number of requests for the given interval
@@ -166,7 +159,7 @@ pub struct Limit {
 impl Limit {
     pub fn new(value: &str, window: Option<Duration>, vendor: Option<Vendor>) -> Result<Self> {
         Ok(Self {
-            count: to_usize(value)?,
+            count: convert::to_usize(value)?,
             window,
             vendor,
         })
@@ -182,7 +175,7 @@ pub struct Remaining {
 impl Remaining {
     pub fn new(value: &str) -> Result<Self> {
         Ok(Self {
-            count: to_usize(value)?,
+            count: convert::to_usize(value)?,
         })
     }
 }
@@ -246,9 +239,7 @@ impl RateLimit {
     }
 
     fn get_rate_limit_header(header_map: &HeaderMap) -> Result<(&String, RateLimitVariant)> {
-        let variants = RATE_LIMIT_HEADERS
-            .lock()
-            .map_err(|_| Error::Lock)?;
+        let variants = RATE_LIMIT_HEADERS.lock().map_err(|_| Error::Lock)?;
 
         for variant in variants.iter() {
             if let Some(value) = header_map.get(&variant.limit_header) {
@@ -259,9 +250,7 @@ impl RateLimit {
     }
 
     fn get_remaining_header(header_map: &HeaderMap) -> Result<&String> {
-        let variants = RATE_LIMIT_HEADERS
-            .lock()
-            .map_err(|_| Error::Lock)?;
+        let variants = RATE_LIMIT_HEADERS.lock().map_err(|_| Error::Lock)?;
 
         for variant in variants.iter() {
             if let Some(value) = header_map.get(&variant.remaining_header) {
@@ -272,9 +261,7 @@ impl RateLimit {
     }
 
     fn get_reset_header(header_map: &HeaderMap) -> Result<(&String, ResetTimeKind)> {
-        let variants = RATE_LIMIT_HEADERS
-            .lock()
-            .map_err(|_| Error::Lock)?;
+        let variants = RATE_LIMIT_HEADERS.lock().map_err(|_| Error::Lock)?;
 
         for variant in variants.iter() {
             if let Some(value) = header_map.get(&variant.reset_header) {

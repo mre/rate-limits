@@ -1,9 +1,19 @@
 [package]
 name = "rate-limits"
-version = "0.1.0"
+authors = ["Matthias Endler <matthias@endler.dev>"]
+version = "0.1.1"
 edition = "2021"
 description = "A parser for HTTP rate limit headers"
 license = "Apache-2.0/MIT"
+homepage = "https://github.com/mre/rate-limits"
+repository = "https://github.com/mre/rate-limits"
+documentation = "https://docs.rs/rate-limits"
+keywords = [
+    "http",
+    "rate-limit",
+    "header",
+    "parser",
+]
 
 [dependencies]
 displaydoc = "0.2.3"

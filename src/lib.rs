@@ -5,7 +5,7 @@
 //! ```rust
 //! use indoc::indoc;
 //! use time::{OffsetDateTime, Duration};
-//! use rate_limit::{Vendor, RateLimit, ResetTime};
+//! use rate_limits::{Vendor, RateLimit, ResetTime};
 //!
 //! let headers = indoc! {"
 //!     x-ratelimit-limit: 5000
@@ -122,7 +122,7 @@ impl RateLimit {
     pub fn new(raw: &str) -> std::result::Result<Self, Error> {
         let headers = HeaderMap::new(raw);
 
-        let (value, variant) = Self::get_rate_limit_header(&headers)?;
+        let (value, variant) = Self::get_rate_limits_header(&headers)?;
         let limit = Limit::new(value.as_ref())?;
 
         let value = Self::get_remaining_header(&headers)?;
@@ -140,7 +140,7 @@ impl RateLimit {
         })
     }
 
-    fn get_rate_limit_header(header_map: &HeaderMap) -> Result<(&String, RateLimitVariant)> {
+    fn get_rate_limits_header(header_map: &HeaderMap) -> Result<(&String, RateLimitVariant)> {
         let variants = RATE_LIMIT_HEADERS.lock().map_err(|_| Error::Lock)?;
 
         for variant in variants.iter() {
@@ -208,11 +208,11 @@ mod tests {
     #[test]
     fn parse_vendor() {
         let map = HeaderMap::new("x-ratelimit-limit: 5000");
-        let (_, variant) = RateLimit::get_rate_limit_header(&map).unwrap();
+        let (_, variant) = RateLimit::get_rate_limits_header(&map).unwrap();
         assert_eq!(variant.vendor, Vendor::Github);
 
         let map = HeaderMap::new("RateLimit-Limit: 5000");
-        let (_, variant) = RateLimit::get_rate_limit_header(&map).unwrap();
+        let (_, variant) = RateLimit::get_rate_limits_header(&map).unwrap();
         assert_eq!(variant.vendor, Vendor::Standard);
     }
 

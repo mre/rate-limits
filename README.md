@@ -7,7 +7,7 @@ also supported on a best effort basis.
 ```rust
 use indoc::indoc;
 use time::{OffsetDateTime, Duration};
-use rate_limit::{Vendor, RateLimit, ResetTime};
+use rate_limits::{Vendor, RateLimit, ResetTime};
 
 let headers = indoc! {"
     x-ratelimit-limit: 5000
@@ -30,7 +30,8 @@ assert_eq!(
 ```
 
 Other resources:
-* https://stackoverflow.com/a/16022625/270334
+
+- https://stackoverflow.com/a/16022625/270334
 
 [github]: https://docs.github.com/en/rest/overview/resources-in-the-rest-api
 [draft]: https://tools.ietf.org/id/draft-polli-ratelimit-headers-00.html

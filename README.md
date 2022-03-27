@@ -1,4 +1,4 @@
-# rate-limit
+# rate-limits
 
 A crate for parsing HTTP rate limit headers as per the [IETF draft][draft].
 Inofficial implementations like the [Github rate limit headers][github] are
@@ -32,6 +32,12 @@ assert_eq!(
 Other resources:
 
 - https://stackoverflow.com/a/16022625/270334
+
+## Installation
+
+```
+cargo add rate-limits
+```
 
 [github]: https://docs.github.com/en/rest/overview/resources-in-the-rest-api
 [draft]: https://tools.ietf.org/id/draft-polli-ratelimit-headers-00.html

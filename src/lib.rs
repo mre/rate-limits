@@ -42,8 +42,11 @@ use error::{Error, Result};
 use once_cell::sync::Lazy;
 use std::sync::Mutex;
 use time::Duration;
+use types::Used;
 pub use types::{HeaderMap, Limit, RateLimitVariant, Remaining, ResetTime, ResetTimeKind, Vendor};
 
+/// Different types of rate limit headers
+/// The casing might be significant to separate between different vendors
 static RATE_LIMIT_HEADERS: Lazy<Mutex<Vec<RateLimitVariant>>> = Lazy::new(|| {
     let v = vec![
         // Headers as defined in https://tools.ietf.org/id/draft-polli-ratelimit-headers-00.html
@@ -53,9 +56,24 @@ static RATE_LIMIT_HEADERS: Lazy<Mutex<Vec<RateLimitVariant>>> = Lazy::new(|| {
         RateLimitVariant::new(
             Vendor::Standard,
             None,
-            "RateLimit-Limit".to_string(),
+            Some("RateLimit-Limit".to_string()),
+            None,
             "Ratelimit-Remaining".to_string(),
             "Ratelimit-Reset".to_string(),
+            ResetTimeKind::Seconds,
+        ),
+        // Reddit (https://www.reddit.com/r/redditdev/comments/1yxrp7/formal_ratelimiting_headers/)
+        // TODO: Calculate limit from used+remaining
+        // X-Ratelimit-Used         Approximate number of requests used in this period
+        // X-Ratelimit-Remaining    Approximate number of requests left to use
+        // X-Ratelimit-Reset        Approximate number of seconds to end of period
+        RateLimitVariant::new(
+            Vendor::Reddit,
+            Some(Duration::minutes(10)),
+            None,
+            Some("X-Ratelimit-Used".to_string()),
+            "X-Ratelimit-Remaining".to_string(),
+            "X-Ratelimit-Reset".to_string(),
             ResetTimeKind::Seconds,
         ),
         // Github
@@ -65,7 +83,8 @@ static RATE_LIMIT_HEADERS: Lazy<Mutex<Vec<RateLimitVariant>>> = Lazy::new(|| {
         RateLimitVariant::new(
             Vendor::Github,
             Some(Duration::HOUR),
-            "x-ratelimit-limit".to_string(),
+            Some("x-ratelimit-limit".to_string()),
+            None,
             "x-ratelimit-remaining".to_string(),
             "x-ratelimit-reset".to_string(),
             ResetTimeKind::Timestamp,
@@ -77,7 +96,8 @@ static RATE_LIMIT_HEADERS: Lazy<Mutex<Vec<RateLimitVariant>>> = Lazy::new(|| {
         RateLimitVariant::new(
             Vendor::Twitter,
             Some(Duration::minutes(15)),
-            "x-rate-limit-limit".to_string(),
+            Some("x-rate-limit-limit".to_string()),
+            None,
             "x-rate-limit-remaining".to_string(),
             "x-rate-limit-reset".to_string(),
             ResetTimeKind::Timestamp,
@@ -89,7 +109,8 @@ static RATE_LIMIT_HEADERS: Lazy<Mutex<Vec<RateLimitVariant>>> = Lazy::new(|| {
         RateLimitVariant::new(
             Vendor::Vimeo,
             Some(Duration::seconds(60)),
-            "X-RateLimit-Limit".to_string(),
+            Some("X-RateLimit-Limit".to_string()),
+            None,
             "X-RateLimit-Remaining".to_string(),
             "X-RateLimit-Reset".to_string(),
             ResetTimeKind::ImfFixdate,
@@ -122,11 +143,20 @@ impl RateLimit {
     pub fn new(raw: &str) -> std::result::Result<Self, Error> {
         let headers = HeaderMap::new(raw);
 
-        let (value, variant) = Self::get_rate_limits_header(&headers)?;
-        let limit = Limit::new(value.as_ref())?;
-
         let value = Self::get_remaining_header(&headers)?;
         let remaining = Remaining::new(value.as_ref())?;
+
+        let (limit, variant) = if let Ok((limit, variant)) = Self::get_rate_limit_header(&headers) {
+            (Limit::new(limit.as_ref())?, variant)
+        } else if let Ok((used, variant)) = Self::get_used_header(&headers) {
+            // The site provides a `used` header, but no `limit` header.
+            // Therefore we have to calculate the limit from used and remaining.
+            let used = Used::new(used)?;
+            let limit = used.count + remaining.count;
+            (Limit::from(limit), variant)
+        } else {
+            return Err(Error::MissingLimit);
+        };
 
         let (value, kind) = Self::get_reset_header(&headers)?;
         let reset = ResetTime::new(value, kind)?;
@@ -140,12 +170,27 @@ impl RateLimit {
         })
     }
 
-    fn get_rate_limits_header(header_map: &HeaderMap) -> Result<(&String, RateLimitVariant)> {
+    fn get_rate_limit_header(header_map: &HeaderMap) -> Result<(&String, RateLimitVariant)> {
         let variants = RATE_LIMIT_HEADERS.lock().map_err(|_| Error::Lock)?;
 
         for variant in variants.iter() {
-            if let Some(value) = header_map.get(&variant.limit_header) {
-                return Ok((value, variant.clone()));
+            if let Some(limit) = &variant.limit_header {
+                if let Some(value) = header_map.get(limit) {
+                    return Ok((value, variant.clone()));
+                }
+            }
+        }
+        Err(Error::MissingLimit)
+    }
+
+    fn get_used_header(header_map: &HeaderMap) -> Result<(&String, RateLimitVariant)> {
+        let variants = RATE_LIMIT_HEADERS.lock().map_err(|_| Error::Lock)?;
+
+        for variant in variants.iter() {
+            if let Some(used) = &variant.used_header {
+                if let Some(value) = header_map.get(used) {
+                    return Ok((value, variant.clone()));
+                }
             }
         }
         Err(Error::MissingLimit)
@@ -190,6 +235,7 @@ impl RateLimit {
 mod tests {
 
     use super::*;
+    use indoc::indoc;
     use time::{macros::datetime, OffsetDateTime};
 
     #[test]
@@ -208,11 +254,11 @@ mod tests {
     #[test]
     fn parse_vendor() {
         let map = HeaderMap::new("x-ratelimit-limit: 5000");
-        let (_, variant) = RateLimit::get_rate_limits_header(&map).unwrap();
+        let (_, variant) = RateLimit::get_rate_limit_header(&map).unwrap();
         assert_eq!(variant.vendor, Vendor::Github);
 
         let map = HeaderMap::new("RateLimit-Limit: 5000");
-        let (_, variant) = RateLimit::get_rate_limits_header(&map).unwrap();
+        let (_, variant) = RateLimit::get_rate_limit_header(&map).unwrap();
         assert_eq!(variant.vendor, Vendor::Standard);
     }
 
@@ -259,8 +305,7 @@ mod tests {
         let map = HeaderMap::new("foo: bar\nBAZ AND MORE: 124 456 moo");
         assert_eq!(map.len(), 2);
         assert_eq!(map.get("foo"), Some(&"bar".to_string()));
-        assert_eq!(map.get("baz and more"), Some(&"124 456 moo".to_string()));
-        assert_eq!(map.get("BaZ aNd mOre"), Some(&"124 456 moo".to_string()));
+        assert_eq!(map.get("BAZ AND MORE"), Some(&"124 456 moo".to_string()));
     }
 
     #[test]
@@ -283,10 +328,11 @@ x-ratelimit-reset: 1350085394
 
     #[test]
     fn parse_github_headers() {
-        let headers = "x-ratelimit-limit: 5000
-x-ratelimit-remaining: 4987
-x-ratelimit-reset: 1350085394
-        ";
+        let headers = indoc! {"
+            x-ratelimit-limit: 5000
+            x-ratelimit-remaining: 4987
+            x-ratelimit-reset: 1350085394
+        "};
 
         let rate = RateLimit::new(headers).unwrap();
         assert_eq!(rate.limit(), 5000);
@@ -295,5 +341,19 @@ x-ratelimit-reset: 1350085394
             rate.reset(),
             ResetTime::DateTime(OffsetDateTime::from_unix_timestamp(1350085394).unwrap())
         );
+    }
+
+    #[test]
+    fn parse_reddit_headers() {
+        let headers = indoc! {"
+            X-Ratelimit-Used: 100
+            X-Ratelimit-Remaining: 22
+            X-Ratelimit-Reset: 30
+        "};
+
+        let rate = RateLimit::new(headers).unwrap();
+        assert_eq!(rate.limit(), 122);
+        assert_eq!(rate.remaining(), 22);
+        assert_eq!(rate.reset(), ResetTime::Seconds(30));
     }
 }

@@ -55,6 +55,8 @@ pub enum Vendor {
     Github,
     /// Vimeo rate limit headers
     Vimeo,
+    /// Reddit rate limit headers
+    Reddit,
 }
 
 /// A variant defines all relevant fields for parsing headers from a given vendor
@@ -62,7 +64,8 @@ pub enum Vendor {
 pub struct RateLimitVariant {
     pub vendor: Vendor,
     pub duration: Option<Duration>,
-    pub limit_header: String,
+    pub limit_header: Option<String>,
+    pub used_header: Option<String>,
     pub remaining_header: String,
     pub reset_header: String,
     pub reset_kind: ResetTimeKind,
@@ -72,7 +75,8 @@ impl RateLimitVariant {
     pub fn new(
         vendor: Vendor,
         duration: Option<Duration>,
-        limit_header: String,
+        limit_header: Option<String>,
+        used_header: Option<String>,
         remaining_header: String,
         reset_header: String,
         reset_kind: ResetTimeKind,
@@ -81,6 +85,7 @@ impl RateLimitVariant {
             vendor,
             duration,
             limit_header,
+            used_header,
             remaining_header,
             reset_header,
             reset_kind,
@@ -95,6 +100,26 @@ pub struct Limit {
 }
 
 impl Limit {
+    pub fn new(value: &str) -> Result<Self> {
+        Ok(Self {
+            count: convert::to_usize(value)?,
+        })
+    }
+}
+
+impl From<usize> for Limit {
+    fn from(count: usize) -> Self {
+        Self { count }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Used {
+    /// Number of used requests for the given interval
+    pub count: usize,
+}
+
+impl Used {
     pub fn new(value: &str) -> Result<Self> {
         Ok(Self {
             count: convert::to_usize(value)?,
@@ -127,17 +152,17 @@ impl HeaderMap {
             inner: headers
                 .lines()
                 .filter_map(|line| line.split_once(':'))
-                .map(|(header, value)| (header.to_lowercase(), value.trim().to_lowercase()))
+                .map(|(header, value)| (header.to_string(), value.trim().to_lowercase()))
                 .collect(),
         }
     }
 
     #[cfg(test)]
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.inner.len()
     }
 
     pub fn get(&self, k: &str) -> Option<&String> {
-        self.inner.get(&k.to_lowercase())
+        self.inner.get(k)
     }
 }

@@ -4,7 +4,7 @@
 
 A crate for parsing HTTP rate limit headers as per the [IETF draft][draft].
 Inofficial implementations like the [Github rate limit headers][github] are
-also supported on a best effort basis.
+also supported on a best effort basis. See [vendor list] for support.
 
 ```rust
 use indoc::indoc;
@@ -43,3 +43,4 @@ cargo add rate-limits
 
 [github]: https://docs.github.com/en/rest/overview/resources-in-the-rest-api
 [draft]: https://tools.ietf.org/id/draft-polli-ratelimit-headers-00.html
+[vendor list]: https://docs.rs/rate-limits/latest/rate_limits/enum.Vendor.html

@@ -9,6 +9,7 @@ pub enum ResetTimeKind {
     Seconds,
     Timestamp,
     ImfFixdate,
+    Iso8601,
 }
 
 /// Reset time of rate limiting
@@ -31,6 +32,12 @@ impl ResetTime {
                 OffsetDateTime::from_unix_timestamp(convert::to_i64(value)?)
                     .map_err(Error::Time)?,
             )),
+            ResetTimeKind::Iso8601 => {
+                // https://github.com/time-rs/time/issues/378
+                let format = time::format_description::parse("YYYYMMDDTHHMMSSZ").unwrap();
+                let d = PrimitiveDateTime::parse(value, &format).map_err(Error::Parse)?;
+                Ok(ResetTime::DateTime(d.assume_utc()))
+            }
             ResetTimeKind::ImfFixdate => {
                 let d =
                     PrimitiveDateTime::parse(value, &time::format_description::well_known::Rfc2822)

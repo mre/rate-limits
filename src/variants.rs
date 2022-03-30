@@ -82,11 +82,21 @@ pub static RATE_LIMIT_HEADERS: Lazy<Mutex<Vec<RateLimitVariant>>> = Lazy::new(||
         RateLimitVariant::new(
             Vendor::Standard,
             Some(Duration::seconds(60)),
-            Some("RateLimit-Observed".to_string()),
             Some("RateLimit-Limit".to_string()),
+            Some("RateLimit-Observed".to_string()),
             "RateLimit-Remaining".to_string(),
             "RateLimit-Reset".to_string(),
             ResetTimeKind::Timestamp,
+        ),
+        // Akamai
+        RateLimitVariant::new(
+            Vendor::Standard,
+            Some(Duration::seconds(60)),
+            Some("X-RateLimit-Limit".to_string()),
+            None,
+            "X-RateLimit-Remaining".to_string(),
+            "X-RateLimit-Next".to_string(),
+            ResetTimeKind::Iso8601,
         ),
     ];
 

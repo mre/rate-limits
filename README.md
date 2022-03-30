@@ -31,7 +31,7 @@ assert_eq!(
 );
 ```
 
-Also takes the `Retry-After` into account wen calculating the reset time.
+Also takes the `Retry-After` into account when calculating the reset time.
 
 Other resources:
 

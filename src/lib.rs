@@ -83,8 +83,13 @@ impl RateLimit {
             return Err(Error::MissingLimit);
         };
 
-        let (value, kind) = Self::get_reset_header(&headers)?;
-        let reset = ResetTime::new(value, kind)?;
+        // https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Retry-After
+        let reset = if let Some(seconds) = Self::get_retry_after_header(&headers) {
+            ResetTime::new(seconds, ResetTimeKind::Seconds)?
+        } else {
+            let (value, kind) = Self::get_reset_header(&headers)?;
+            ResetTime::new(value, kind)?
+        };
 
         Ok(RateLimit {
             limit: limit.count,
@@ -143,6 +148,10 @@ impl RateLimit {
         Err(Error::MissingRemaining)
     }
 
+    fn get_retry_after_header(header_map: &HeaderMap) -> Option<&String> {
+        header_map.get("Retry-After")
+    }
+
     pub fn limit(&self) -> usize {
         self.limit
     }
@@ -185,6 +194,13 @@ mod tests {
         let map = HeaderMap::new("RateLimit-Limit: 5000");
         let (_, variant) = RateLimit::get_rate_limit_header(&map).unwrap();
         assert_eq!(variant.vendor, Vendor::Standard);
+    }
+
+    #[test]
+    fn parse_retry_after() {
+        let map = HeaderMap::new("Retry-After: 30");
+        let retry = RateLimit::get_retry_after_header(&map).unwrap();
+        assert_eq!("30", retry);
     }
 
     #[test]
@@ -298,5 +314,20 @@ x-ratelimit-reset: 1350085394
             rate.reset(),
             ResetTime::DateTime(OffsetDateTime::from_unix_timestamp(1609844400).unwrap())
         );
+    }
+
+    #[test]
+    fn retry_after_takes_precedence_over_reset() {
+        let headers = indoc! {"
+            X-Ratelimit-Used: 100
+            X-Ratelimit-Remaining: 22
+            X-Ratelimit-Reset: 30
+            Retry-After: 20
+        "};
+
+        let rate = RateLimit::new(headers).unwrap();
+        assert_eq!(rate.limit(), 122);
+        assert_eq!(rate.remaining(), 22);
+        assert_eq!(rate.reset(), ResetTime::Seconds(20));
     }
 }

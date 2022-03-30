@@ -27,6 +27,8 @@
 //! );
 //! ```
 //!
+//! Also takes the `Retry-After` into account wen calculating the reset time.
+//!
 //! Other resources:
 //! * https://stackoverflow.com/a/16022625/270334
 //!

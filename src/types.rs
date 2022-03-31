@@ -64,6 +64,8 @@ pub enum Vendor {
     Vimeo,
     /// Reddit rate limit headers
     Reddit,
+    /// Akamai rate limit headers
+    Akamai,
 }
 
 /// A variant defines all relevant fields for parsing headers from a given vendor

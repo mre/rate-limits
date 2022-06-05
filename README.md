@@ -18,7 +18,7 @@ let headers = indoc! {"
 "};
 
 assert_eq!(
-    RateLimit::new(headers).unwrap(),
+    RateLimit::from_str(headers).unwrap(),
     RateLimit {
         limit: 5000,
         remaining: 4987,
@@ -31,18 +31,18 @@ assert_eq!(
 );
 ```
 
-Also takes the `Retry-After` into account when calculating the reset time.
+Also takes the `Retry-After` header into account when calculating the reset
+time.
 
-Other resources:
+### Other resources:
 
-- https://stackoverflow.com/a/16022625/270334
+* [Examples of HTTP API Rate Limiting HTTP Response][stackoverflow]
 
-## Installation
 
-```
-cargo add rate-limits
-```
-
-[github]: https://docs.github.com/en/rest/overview/resources-in-the-rest-api
 [draft]: https://tools.ietf.org/id/draft-polli-ratelimit-headers-00.html
+[headers]: https://stackoverflow.com/a/16022625/270334
+[github]: https://docs.github.com/en/rest/overview/resources-in-the-rest-api
 [vendor list]: https://docs.rs/rate-limits/latest/rate_limits/enum.Vendor.html
+[stackoverflow]: https://stackoverflow.com/questions/16022624/examples-of-http-api-rate-limiting-http-response-headers
+
+License: Apache-2.0/MIT

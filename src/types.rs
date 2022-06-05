@@ -1,8 +1,11 @@
-use std::collections::HashMap;
+use std::str::FromStr;
 
 use crate::convert;
 use crate::error::{Error, Result};
+use headers::{HeaderMap, HeaderName, HeaderValue};
 use time::{Duration, OffsetDateTime, PrimitiveDateTime};
+
+const HEADER_SEPARATOR: &str = ":";
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ResetTimeKind {
@@ -25,7 +28,8 @@ pub enum ResetTime {
 }
 
 impl ResetTime {
-    pub fn new(value: &str, kind: ResetTimeKind) -> Result<Self> {
+    pub fn new(value: &HeaderValue, kind: ResetTimeKind) -> Result<Self> {
+        let value = value.to_str()?;
         match kind {
             ResetTimeKind::Seconds => Ok(ResetTime::Seconds(convert::to_usize(value)?)),
             ResetTimeKind::Timestamp => Ok(Self::DateTime(
@@ -109,9 +113,9 @@ pub struct Limit {
 }
 
 impl Limit {
-    pub fn new(value: &str) -> Result<Self> {
+    pub fn new<T: AsRef<str>>(value: T) -> Result<Self> {
         Ok(Self {
-            count: convert::to_usize(value)?,
+            count: convert::to_usize(value.as_ref())?,
         })
     }
 }
@@ -150,28 +154,23 @@ impl Remaining {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct HeaderMap {
-    inner: HashMap<String, String>,
+pub(crate) trait HeaderMapExt {
+    fn from_raw(raw: &str) -> Result<HeaderMap>;
 }
 
-impl HeaderMap {
-    pub fn new(headers: &str) -> Self {
-        HeaderMap {
-            inner: headers
-                .lines()
-                .filter_map(|line| line.split_once(':'))
-                .map(|(header, value)| (header.to_string(), value.trim().to_lowercase()))
-                .collect(),
+impl HeaderMapExt for HeaderMap {
+    fn from_raw(raw: &str) -> Result<HeaderMap> {
+        let mut headers = HeaderMap::new();
+
+        for line in raw.lines() {
+            if !line.contains(HEADER_SEPARATOR) {
+                return Err(Error::HeaderWithoutColon(line.to_string()));
+            }
+            if let Some((name, value)) = line.split_once(HEADER_SEPARATOR) {
+                let value = value.trim();
+                headers.insert(HeaderName::from_str(name)?, HeaderValue::from_str(&value)?);
+            }
         }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn len(&self) -> usize {
-        self.inner.len()
-    }
-
-    pub fn get(&self, k: &str) -> Option<&String> {
-        self.inner.get(k)
+        Ok(headers)
     }
 }

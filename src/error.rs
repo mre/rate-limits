@@ -9,6 +9,9 @@ pub enum Error {
     /// HTTP x-ratelimit-limit header not found
     MissingLimit,
 
+    /// HTTP x-ratelimit-used  header not found
+    MissingUsed,
+
     /// HTTP x-ratelimit-remaining header not found
     MissingRemaining,
 
@@ -25,7 +28,7 @@ pub enum Error {
     InvalidHeaderValue(#[from] http::header::InvalidHeaderValue),
 
     /// Cannot convert header value to string
-    ToStrError(#[from] http::header::ToStrError),
+    ToStr(#[from] http::header::ToStrError),
 
     /// Cannot parse rate limit header value: {0}
     InvalidValue(#[from] ParseIntError),

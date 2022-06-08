@@ -6,6 +6,7 @@
 //!
 //! ```rust
 //! use indoc::indoc;
+//! use std::str::FromStr;
 //! use time::{OffsetDateTime, Duration};
 //! use rate_limits::{Vendor, RateLimit, ResetTime};
 //!
@@ -32,16 +33,44 @@
 //! Also takes the `Retry-After` header into account when calculating the reset
 //! time.
 //!
+//! [http::HeaderMap][headermap] is supported as well:
+//!
+//! ```rust
+//! use std::str::FromStr;
+//! use time::{OffsetDateTime, Duration};
+//! use rate_limits::{Vendor, RateLimit, ResetTime};
+//! use http::header::HeaderMap;
+//!
+//! let mut headers = HeaderMap::new();
+//! headers.insert("X-RATELIMIT-LIMIT", "5000".parse().unwrap());
+//! headers.insert("X-RATELIMIT-REMAINING", "4987".parse().unwrap());
+//! headers.insert("X-RATELIMIT-RESET", "1350085394".parse().unwrap());
+//!
+//! assert_eq!(
+//!     RateLimit::new(headers).unwrap(),
+//!     RateLimit {
+//!         limit: 5000,
+//!         remaining: 4987,
+//!         reset: ResetTime::DateTime(
+//!             OffsetDateTime::from_unix_timestamp(1350085394).unwrap()
+//!         ),
+//!         window: Some(Duration::HOUR),
+//!         vendor: Vendor::Github
+//!     },
+//! );
+//! ```
+//!
 //! ## Other resources:
-//! 
+//!
 //! * [Examples of HTTP API Rate Limiting HTTP Response][stackoverflow]
 //!
-//! 
+//!
 //! [draft]: https://tools.ietf.org/id/draft-polli-ratelimit-headers-00.html
 //! [headers]: https://stackoverflow.com/a/16022625/270334
 //! [github]: https://docs.github.com/en/rest/overview/resources-in-the-rest-api
 //! [vendor list]: https://docs.rs/rate-limits/latest/rate_limits/enum.Vendor.html
 //! [stackoverflow]: https://stackoverflow.com/questions/16022624/examples-of-http-api-rate-limiting-http-response-headers
+//! [headermap]: https://docs.rs/http/latest/http/header/struct.HeaderMap.html
 
 mod convert;
 mod error;
@@ -51,8 +80,8 @@ mod variants;
 use std::str::FromStr;
 
 use error::{Error, Result};
-use headers::{HeaderMap, HeaderValue};
-use types::HeaderMapExt;
+use headers::HeaderValue;
+use types::CaseSensitiveHeaderMap;
 use variants::RATE_LIMIT_HEADERS;
 
 use time::Duration;
@@ -79,7 +108,8 @@ impl RateLimit {
     /// There are different header names for various websites
     /// Github, Vimeo, Twitter, Imgur, etc have their own headers.
     /// Without additional context, the parsing is done on a best-effort basis.
-    pub fn new(headers: &HeaderMap) -> std::result::Result<Self, Error> {
+    pub fn new<T: Into<CaseSensitiveHeaderMap>>(headers: T) -> std::result::Result<Self, Error> {
+        let headers = headers.into();
         let value = Self::get_remaining_header(&headers)?;
         let remaining = Remaining::new(value.to_str()?)?;
 
@@ -92,7 +122,7 @@ impl RateLimit {
             let limit = used.count + remaining.count;
             (Limit::from(limit), variant)
         } else {
-            return Err(Error::MissingLimit);
+            return Err(Error::MissingUsed);
         };
 
         // https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Retry-After
@@ -112,7 +142,9 @@ impl RateLimit {
         })
     }
 
-    fn get_rate_limit_header(header_map: &HeaderMap) -> Result<(&HeaderValue, RateLimitVariant)> {
+    fn get_rate_limit_header(
+        header_map: &CaseSensitiveHeaderMap,
+    ) -> Result<(&HeaderValue, RateLimitVariant)> {
         let variants = RATE_LIMIT_HEADERS.lock().map_err(|_| Error::Lock)?;
 
         for variant in variants.iter() {
@@ -125,7 +157,9 @@ impl RateLimit {
         Err(Error::MissingLimit)
     }
 
-    fn get_used_header(header_map: &HeaderMap) -> Result<(&HeaderValue, RateLimitVariant)> {
+    fn get_used_header(
+        header_map: &CaseSensitiveHeaderMap,
+    ) -> Result<(&HeaderValue, RateLimitVariant)> {
         let variants = RATE_LIMIT_HEADERS.lock().map_err(|_| Error::Lock)?;
 
         for variant in variants.iter() {
@@ -135,10 +169,10 @@ impl RateLimit {
                 }
             }
         }
-        Err(Error::MissingLimit)
+        Err(Error::MissingUsed)
     }
 
-    fn get_remaining_header(header_map: &HeaderMap) -> Result<&HeaderValue> {
+    fn get_remaining_header(header_map: &CaseSensitiveHeaderMap) -> Result<&HeaderValue> {
         let variants = RATE_LIMIT_HEADERS.lock().map_err(|_| Error::Lock)?;
 
         for variant in variants.iter() {
@@ -149,7 +183,9 @@ impl RateLimit {
         Err(Error::MissingRemaining)
     }
 
-    fn get_reset_header(header_map: &HeaderMap) -> Result<(&HeaderValue, ResetTimeKind)> {
+    fn get_reset_header(
+        header_map: &CaseSensitiveHeaderMap,
+    ) -> Result<(&HeaderValue, ResetTimeKind)> {
         let variants = RATE_LIMIT_HEADERS.lock().map_err(|_| Error::Lock)?;
 
         for variant in variants.iter() {
@@ -160,7 +196,7 @@ impl RateLimit {
         Err(Error::MissingRemaining)
     }
 
-    fn get_retry_after_header(header_map: &HeaderMap) -> Option<&HeaderValue> {
+    fn get_retry_after_header(header_map: &CaseSensitiveHeaderMap) -> Option<&HeaderValue> {
         header_map.get("Retry-After")
     }
 
@@ -180,16 +216,18 @@ impl RateLimit {
 impl FromStr for RateLimit {
     type Err = Error;
 
-    fn from_str(s: &str) -> Result<Self> {
-        let map = HeaderMap::from_raw(s)?;
-        RateLimit::new(&map)
+    fn from_str(map: &str) -> Result<Self> {
+        RateLimit::new(CaseSensitiveHeaderMap::from_str(map)?)
     }
 }
 
 #[cfg(test)]
 mod tests {
 
+    use crate::types::HeaderMapExt;
+
     use super::*;
+    use headers::HeaderMap;
     use indoc::indoc;
     use time::{macros::datetime, OffsetDateTime};
 
@@ -208,19 +246,20 @@ mod tests {
 
     #[test]
     fn parse_vendor() {
-        let map = HeaderMap::from_raw("x-ratelimit-limit: 5000").unwrap();
+        let map = CaseSensitiveHeaderMap::from_str("x-ratelimit-limit: 5000").unwrap();
         let (_, variant) = RateLimit::get_rate_limit_header(&map).unwrap();
         assert_eq!(variant.vendor, Vendor::Github);
 
-        let map = HeaderMap::from_raw("RateLimit-Limit: 5000").unwrap();
+        let map = CaseSensitiveHeaderMap::from_str("RateLimit-Limit: 5000").unwrap();
         let (_, variant) = RateLimit::get_rate_limit_header(&map).unwrap();
         assert_eq!(variant.vendor, Vendor::Standard);
     }
 
     #[test]
     fn parse_retry_after() {
-        let map = HeaderMap::from_raw("Retry-After: 30").unwrap();
+        let map = CaseSensitiveHeaderMap::from_str("Retry-After: 30").unwrap();
         let retry = RateLimit::get_retry_after_header(&map).unwrap();
+
         assert_eq!("30", retry);
     }
 

@@ -81,7 +81,7 @@ pub static RATE_LIMIT_HEADERS: Lazy<Mutex<Vec<RateLimitVariant>>> = Lazy::new(||
         // RateLimit-Remaining: Remaining quota in the time window. The result of RateLimit-Limit - RateLimit-Observed.
         // RateLimit-Reset:     Unix time-formatted time when the request quota is reset.
         RateLimitVariant::new(
-            Vendor::Standard,
+            Vendor::Gitlab,
             Some(Duration::seconds(60)),
             Some("RateLimit-Limit".to_string()),
             Some("RateLimit-Observed".to_string()),

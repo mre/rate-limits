@@ -1,9 +1,12 @@
+//! [![docs.rs](https://docs.rs/rate-limits/badge.svg)](https://docs.rs/rate-limits)
+//!
 //! A crate for parsing HTTP rate limit headers as per the [IETF draft][draft].
 //! Inofficial implementations like the [Github rate limit headers][github] are
-//! also supported on a best effort basis.
+//! also supported on a best effort basis. See [vendor list] for support.
 //!
 //! ```rust
 //! use indoc::indoc;
+//! use std::str::FromStr;
 //! use time::{OffsetDateTime, Duration};
 //! use rate_limits::{Vendor, RateLimit, ResetTime};
 //!
@@ -12,6 +15,36 @@
 //!     x-ratelimit-remaining: 4987
 //!     x-ratelimit-reset: 1350085394
 //! "};
+//!
+//! assert_eq!(
+//!     RateLimit::from_str(headers).unwrap(),
+//!     RateLimit {
+//!         limit: 5000,
+//!         remaining: 4987,
+//!         reset: ResetTime::DateTime(
+//!             OffsetDateTime::from_unix_timestamp(1350085394).unwrap()
+//!         ),
+//!         window: Some(Duration::HOUR),
+//!         vendor: Vendor::Github
+//!     },
+//! );
+//! ```
+//!
+//! Also takes the `Retry-After` header into account when calculating the reset
+//! time.
+//!
+//! [http::HeaderMap][headermap] is supported as well:
+//!
+//! ```rust
+//! use std::str::FromStr;
+//! use time::{OffsetDateTime, Duration};
+//! use rate_limits::{Vendor, RateLimit, ResetTime};
+//! use http::header::HeaderMap;
+//!
+//! let mut headers = HeaderMap::new();
+//! headers.insert("X-RATELIMIT-LIMIT", "5000".parse().unwrap());
+//! headers.insert("X-RATELIMIT-REMAINING", "4987".parse().unwrap());
+//! headers.insert("X-RATELIMIT-RESET", "1350085394".parse().unwrap());
 //!
 //! assert_eq!(
 //!     RateLimit::new(headers).unwrap(),
@@ -27,25 +60,33 @@
 //! );
 //! ```
 //!
-//! Also takes the `Retry-After` into account wen calculating the reset time.
+//! ## Other resources:
 //!
-//! Other resources:
-//! * https://stackoverflow.com/a/16022625/270334
+//! * [Examples of HTTP API Rate Limiting HTTP Response][stackoverflow]
 //!
-//! [github]: https://docs.github.com/en/rest/overview/resources-in-the-rest-api
+//!
 //! [draft]: https://tools.ietf.org/id/draft-polli-ratelimit-headers-00.html
+//! [headers]: https://stackoverflow.com/a/16022625/270334
+//! [github]: https://docs.github.com/en/rest/overview/resources-in-the-rest-api
+//! [vendor list]: https://docs.rs/rate-limits/latest/rate_limits/enum.Vendor.html
+//! [stackoverflow]: https://stackoverflow.com/questions/16022624/examples-of-http-api-rate-limiting-http-response-headers
+//! [headermap]: https://docs.rs/http/latest/http/header/struct.HeaderMap.html
 
 mod convert;
 mod error;
 mod types;
 mod variants;
 
+use std::str::FromStr;
+
 use error::{Error, Result};
+use headers::HeaderValue;
+use types::CaseSensitiveHeaderMap;
 use variants::RATE_LIMIT_HEADERS;
 
 use time::Duration;
 use types::Used;
-pub use types::{HeaderMap, Limit, RateLimitVariant, Remaining, ResetTime, ResetTimeKind, Vendor};
+pub use types::{Limit, RateLimitVariant, Remaining, ResetTime, ResetTimeKind, Vendor};
 
 /// HTTP rate limits as parsed from header values
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -67,22 +108,21 @@ impl RateLimit {
     /// There are different header names for various websites
     /// Github, Vimeo, Twitter, Imgur, etc have their own headers.
     /// Without additional context, the parsing is done on a best-effort basis.
-    pub fn new(raw: &str) -> std::result::Result<Self, Error> {
-        let headers = HeaderMap::new(raw);
-
+    pub fn new<T: Into<CaseSensitiveHeaderMap>>(headers: T) -> std::result::Result<Self, Error> {
+        let headers = headers.into();
         let value = Self::get_remaining_header(&headers)?;
-        let remaining = Remaining::new(value.as_ref())?;
+        let remaining = Remaining::new(value.to_str()?)?;
 
         let (limit, variant) = if let Ok((limit, variant)) = Self::get_rate_limit_header(&headers) {
-            (Limit::new(limit.as_ref())?, variant)
+            (Limit::new(limit.to_str()?)?, variant)
         } else if let Ok((used, variant)) = Self::get_used_header(&headers) {
             // The site provides a `used` header, but no `limit` header.
             // Therefore we have to calculate the limit from used and remaining.
-            let used = Used::new(used)?;
+            let used = Used::new(used.to_str()?)?;
             let limit = used.count + remaining.count;
             (Limit::from(limit), variant)
         } else {
-            return Err(Error::MissingLimit);
+            return Err(Error::MissingUsed);
         };
 
         // https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Retry-After
@@ -102,7 +142,9 @@ impl RateLimit {
         })
     }
 
-    fn get_rate_limit_header(header_map: &HeaderMap) -> Result<(&String, RateLimitVariant)> {
+    fn get_rate_limit_header(
+        header_map: &CaseSensitiveHeaderMap,
+    ) -> Result<(&HeaderValue, RateLimitVariant)> {
         let variants = RATE_LIMIT_HEADERS.lock().map_err(|_| Error::Lock)?;
 
         for variant in variants.iter() {
@@ -115,7 +157,9 @@ impl RateLimit {
         Err(Error::MissingLimit)
     }
 
-    fn get_used_header(header_map: &HeaderMap) -> Result<(&String, RateLimitVariant)> {
+    fn get_used_header(
+        header_map: &CaseSensitiveHeaderMap,
+    ) -> Result<(&HeaderValue, RateLimitVariant)> {
         let variants = RATE_LIMIT_HEADERS.lock().map_err(|_| Error::Lock)?;
 
         for variant in variants.iter() {
@@ -125,10 +169,10 @@ impl RateLimit {
                 }
             }
         }
-        Err(Error::MissingLimit)
+        Err(Error::MissingUsed)
     }
 
-    fn get_remaining_header(header_map: &HeaderMap) -> Result<&String> {
+    fn get_remaining_header(header_map: &CaseSensitiveHeaderMap) -> Result<&HeaderValue> {
         let variants = RATE_LIMIT_HEADERS.lock().map_err(|_| Error::Lock)?;
 
         for variant in variants.iter() {
@@ -139,7 +183,9 @@ impl RateLimit {
         Err(Error::MissingRemaining)
     }
 
-    fn get_reset_header(header_map: &HeaderMap) -> Result<(&String, ResetTimeKind)> {
+    fn get_reset_header(
+        header_map: &CaseSensitiveHeaderMap,
+    ) -> Result<(&HeaderValue, ResetTimeKind)> {
         let variants = RATE_LIMIT_HEADERS.lock().map_err(|_| Error::Lock)?;
 
         for variant in variants.iter() {
@@ -150,7 +196,7 @@ impl RateLimit {
         Err(Error::MissingRemaining)
     }
 
-    fn get_retry_after_header(header_map: &HeaderMap) -> Option<&String> {
+    fn get_retry_after_header(header_map: &CaseSensitiveHeaderMap) -> Option<&HeaderValue> {
         header_map.get("Retry-After")
     }
 
@@ -167,10 +213,21 @@ impl RateLimit {
     }
 }
 
+impl FromStr for RateLimit {
+    type Err = Error;
+
+    fn from_str(map: &str) -> Result<Self> {
+        RateLimit::new(CaseSensitiveHeaderMap::from_str(map)?)
+    }
+}
+
 #[cfg(test)]
 mod tests {
 
+    use crate::types::HeaderMapExt;
+
     use super::*;
+    use headers::HeaderMap;
     use indoc::indoc;
     use time::{macros::datetime, OffsetDateTime};
 
@@ -189,19 +246,20 @@ mod tests {
 
     #[test]
     fn parse_vendor() {
-        let map = HeaderMap::new("x-ratelimit-limit: 5000");
+        let map = CaseSensitiveHeaderMap::from_str("x-ratelimit-limit: 5000").unwrap();
         let (_, variant) = RateLimit::get_rate_limit_header(&map).unwrap();
         assert_eq!(variant.vendor, Vendor::Github);
 
-        let map = HeaderMap::new("RateLimit-Limit: 5000");
+        let map = CaseSensitiveHeaderMap::from_str("RateLimit-Limit: 5000").unwrap();
         let (_, variant) = RateLimit::get_rate_limit_header(&map).unwrap();
         assert_eq!(variant.vendor, Vendor::Standard);
     }
 
     #[test]
     fn parse_retry_after() {
-        let map = HeaderMap::new("Retry-After: 30");
+        let map = CaseSensitiveHeaderMap::from_str("Retry-After: 30").unwrap();
         let retry = RateLimit::get_retry_after_header(&map).unwrap();
+
         assert_eq!("30", retry);
     }
 
@@ -220,23 +278,26 @@ mod tests {
 
     #[test]
     fn parse_reset_timestamp() {
+        let v = HeaderValue::from_str("1350085394").unwrap();
         assert_eq!(
-            ResetTime::new("1350085394", ResetTimeKind::Timestamp).unwrap(),
+            ResetTime::new(&v, ResetTimeKind::Timestamp).unwrap(),
             ResetTime::DateTime(OffsetDateTime::from_unix_timestamp(1350085394).unwrap())
         );
     }
 
     #[test]
     fn parse_reset_seconds() {
+        let v = HeaderValue::from_str("100").unwrap();
         assert_eq!(
-            ResetTime::new("100", ResetTimeKind::Seconds).unwrap(),
+            ResetTime::new(&v, ResetTimeKind::Seconds).unwrap(),
             ResetTime::Seconds(100)
         );
     }
 
     #[test]
     fn parse_reset_datetime() {
-        let d = ResetTime::new("Tue, 15 Nov 1994 08:12:31 GMT", ResetTimeKind::ImfFixdate);
+        let v = HeaderValue::from_str("Tue, 15 Nov 1994 08:12:31 GMT").unwrap();
+        let d = ResetTime::new(&v, ResetTimeKind::ImfFixdate);
         assert_eq!(
             d.unwrap(),
             ResetTime::DateTime(datetime!(1994-11-15 8:12:31 UTC))
@@ -244,28 +305,27 @@ mod tests {
     }
 
     #[test]
-    fn parse_header_map() {
-        let map = HeaderMap::new("foo: bar\nBAZ AND MORE: 124 456 moo");
-        assert_eq!(map.len(), 2);
-        assert_eq!(map.get("foo"), Some(&"bar".to_string()));
-        assert_eq!(map.get("BAZ AND MORE"), Some(&"124 456 moo".to_string()));
-    }
-
-    #[test]
     fn parse_header_map_newlines() {
-        let map = HeaderMap::new(
+        let map = HeaderMap::from_raw(
             "x-ratelimit-limit: 5000
 x-ratelimit-remaining: 4987
 x-ratelimit-reset: 1350085394
 ",
-        );
+        )
+        .unwrap();
 
         assert_eq!(map.len(), 3);
-        assert_eq!(map.get("x-ratelimit-limit"), Some(&"5000".to_string()));
-        assert_eq!(map.get("x-ratelimit-remaining"), Some(&"4987".to_string()));
+        assert_eq!(
+            map.get("x-ratelimit-limit"),
+            Some(&HeaderValue::from_str("5000").unwrap())
+        );
+        assert_eq!(
+            map.get("x-ratelimit-remaining"),
+            Some(&HeaderValue::from_str("4987").unwrap())
+        );
         assert_eq!(
             map.get("x-ratelimit-reset"),
-            Some(&"1350085394".to_string())
+            Some(&HeaderValue::from_str("1350085394").unwrap())
         );
     }
 
@@ -277,7 +337,7 @@ x-ratelimit-reset: 1350085394
             x-ratelimit-reset: 1350085394
         "};
 
-        let rate = RateLimit::new(headers).unwrap();
+        let rate = RateLimit::from_str(headers).unwrap();
         assert_eq!(rate.limit(), 5000);
         assert_eq!(rate.remaining(), 4987);
         assert_eq!(
@@ -294,7 +354,7 @@ x-ratelimit-reset: 1350085394
             X-Ratelimit-Reset: 30
         "};
 
-        let rate = RateLimit::new(headers).unwrap();
+        let rate = RateLimit::from_str(headers).unwrap();
         assert_eq!(rate.limit(), 122);
         assert_eq!(rate.remaining(), 22);
         assert_eq!(rate.reset(), ResetTime::Seconds(30));
@@ -309,7 +369,7 @@ x-ratelimit-reset: 1350085394
             RateLimit-Reset: 1609844400 
         "};
 
-        let rate = RateLimit::new(headers).unwrap();
+        let rate = RateLimit::from_str(headers).unwrap();
         assert_eq!(rate.limit(), 60);
         assert_eq!(rate.remaining(), 0);
         assert_eq!(
@@ -327,7 +387,7 @@ x-ratelimit-reset: 1350085394
             Retry-After: 20
         "};
 
-        let rate = RateLimit::new(headers).unwrap();
+        let rate = RateLimit::from_str(headers).unwrap();
         assert_eq!(rate.limit(), 122);
         assert_eq!(rate.remaining(), 22);
         assert_eq!(rate.reset(), ResetTime::Seconds(20));

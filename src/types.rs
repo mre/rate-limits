@@ -1,8 +1,12 @@
 use std::collections::HashMap;
+use std::str::FromStr;
 
 use crate::convert;
 use crate::error::{Error, Result};
+use headers::{HeaderMap, HeaderName, HeaderValue};
 use time::{Duration, OffsetDateTime, PrimitiveDateTime};
+
+const HEADER_SEPARATOR: &str = ":";
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ResetTimeKind {
@@ -25,7 +29,8 @@ pub enum ResetTime {
 }
 
 impl ResetTime {
-    pub fn new(value: &str, kind: ResetTimeKind) -> Result<Self> {
+    pub fn new(value: &HeaderValue, kind: ResetTimeKind) -> Result<Self> {
+        let value = value.to_str()?;
         match kind {
             ResetTimeKind::Seconds => Ok(ResetTime::Seconds(convert::to_usize(value)?)),
             ResetTimeKind::Timestamp => Ok(Self::DateTime(
@@ -56,14 +61,16 @@ impl ResetTime {
 pub enum Vendor {
     /// Rate limit headers as defined in the `polli-ratelimit-headers-00` draft
     Standard,
-    /// Twitter API rate limit headers
-    Twitter,
-    /// Github API rate limit headers
-    Github,
-    /// Vimeo rate limit headers
-    Vimeo,
     /// Reddit rate limit headers
     Reddit,
+    /// Github API rate limit headers
+    Github,
+    /// Twitter API rate limit headers
+    Twitter,
+    /// Vimeo rate limit headers
+    Vimeo,
+    /// Gitlab rate limit headers
+    Gitlab,
     /// Akamai rate limit headers
     Akamai,
 }
@@ -109,9 +116,9 @@ pub struct Limit {
 }
 
 impl Limit {
-    pub fn new(value: &str) -> Result<Self> {
+    pub fn new<T: AsRef<str>>(value: T) -> Result<Self> {
         Ok(Self {
-            count: convert::to_usize(value)?,
+            count: convert::to_usize(value.as_ref())?,
         })
     }
 }
@@ -150,28 +157,81 @@ impl Remaining {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct HeaderMap {
-    inner: HashMap<String, String>,
+pub(crate) trait HeaderMapExt {
+    fn from_raw(raw: &str) -> Result<HeaderMap>;
 }
 
-impl HeaderMap {
-    pub fn new(headers: &str) -> Self {
-        HeaderMap {
-            inner: headers
-                .lines()
-                .filter_map(|line| line.split_once(':'))
-                .map(|(header, value)| (header.to_string(), value.trim().to_lowercase()))
-                .collect(),
+impl HeaderMapExt for HeaderMap {
+    fn from_raw(raw: &str) -> Result<HeaderMap> {
+        let mut headers = HeaderMap::new();
+
+        for line in raw.lines() {
+            if !line.contains(HEADER_SEPARATOR) {
+                return Err(Error::HeaderWithoutColon(line.to_string()));
+            }
+            if let Some((name, value)) = line.split_once(HEADER_SEPARATOR) {
+                headers.insert(
+                    HeaderName::from_str(name)?,
+                    HeaderValue::from_str(value.trim())?,
+                );
+            }
+        }
+        Ok(headers)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CaseSensitiveHeaderMap {
+    inner: HashMap<String, HeaderValue>,
+}
+
+impl Default for CaseSensitiveHeaderMap {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl CaseSensitiveHeaderMap {
+    pub fn new() -> Self {
+        Self {
+            inner: HashMap::new(),
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn len(&self) -> usize {
-        self.inner.len()
+    pub fn insert(&mut self, name: String, value: HeaderValue) -> Option<HeaderValue> {
+        self.inner.insert(name, value)
     }
 
-    pub fn get(&self, k: &str) -> Option<&String> {
+    pub fn get(&self, k: &str) -> Option<&HeaderValue> {
         self.inner.get(k)
+    }
+}
+
+impl FromStr for CaseSensitiveHeaderMap {
+    type Err = Error;
+
+    fn from_str(headers: &str) -> Result<Self> {
+        Ok(CaseSensitiveHeaderMap {
+            inner: headers
+                .lines()
+                .filter_map(|line| line.split_once(HEADER_SEPARATOR))
+                .map(|(header, value)| {
+                    (
+                        header.to_string(),
+                        HeaderValue::from_str(value.trim()).unwrap(),
+                    )
+                })
+                .collect(),
+        })
+    }
+}
+
+impl From<HeaderMap> for CaseSensitiveHeaderMap {
+    fn from(headers: HeaderMap) -> Self {
+        let mut cs_map = CaseSensitiveHeaderMap::new();
+        for (name, value) in headers.iter() {
+            cs_map.insert(name.as_str().to_string(), value.clone());
+        }
+        cs_map
     }
 }

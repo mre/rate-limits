@@ -9,11 +9,26 @@ pub enum Error {
     /// HTTP x-ratelimit-limit header not found
     MissingLimit,
 
+    /// HTTP x-ratelimit-used  header not found
+    MissingUsed,
+
     /// HTTP x-ratelimit-remaining header not found
     MissingRemaining,
 
     /// HTTP x-ratelimit-reset header not found
     MissingReset,
+
+    /// Header does not contain colon
+    HeaderWithoutColon(String),
+
+    /// Invalid header name
+    InvalidHeaderName(#[from] http::header::InvalidHeaderName),
+
+    /// Invalid header value
+    InvalidHeaderValue(#[from] http::header::InvalidHeaderValue),
+
+    /// Cannot convert header value to string
+    ToStr(#[from] http::header::ToStrError),
 
     /// Cannot parse rate limit header value: {0}
     InvalidValue(#[from] ParseIntError),

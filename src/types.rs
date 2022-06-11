@@ -63,6 +63,16 @@ impl ResetTime {
             ResetTime::DateTime(d) => (*d - OffsetDateTime::now_utc()).whole_seconds() as usize,
         }
     }
+
+    /// Convert reset time to duration
+    pub fn duration(&self) -> Duration {
+        match self {
+            ResetTime::Seconds(s) => Duration::seconds(*s as i64),
+            ResetTime::DateTime(d) => {
+                Duration::seconds((*d - OffsetDateTime::now_utc()).whole_seconds() as i64)
+            }
+        }
+    }
 }
 
 /// Known vendors of rate limit headers

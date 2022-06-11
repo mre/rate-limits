@@ -51,6 +51,18 @@ impl ResetTime {
             }
         }
     }
+
+    /// Get the number of seconds until the rate limit gets lifted.
+    pub fn seconds(&self) -> usize {
+        match self {
+            ResetTime::Seconds(s) => *s,
+            // OffsetDateTime is not timezone aware, so we need to convert it to UTC
+            // and then convert it to seconds.
+            // There are no negative values in the seconds field, so we can safely
+            // cast it to usize.
+            ResetTime::DateTime(d) => (*d - OffsetDateTime::now_utc()).whole_seconds() as usize,
+        }
+    }
 }
 
 /// Known vendors of rate limit headers

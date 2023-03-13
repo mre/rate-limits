@@ -8,11 +8,21 @@ use time::{Duration, OffsetDateTime, PrimitiveDateTime};
 
 const HEADER_SEPARATOR: &str = ":";
 
-#[derive(Clone, Debug, PartialEq)]
+/// The kind of rate limit reset time
+///
+/// There are different ways to denote rate limits reset times.
+/// Some vendors use seconds, others use a timestamp format for example.
+///
+/// This enum lists all known variants.
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub enum ResetTimeKind {
+    /// Number of seconds until rate limit is lifted
     Seconds,
+    /// Unix timestamp when rate limit will be lifted
     Timestamp,
+    /// RFC 2822 date when rate limit will be lifted
     ImfFixdate,
+    /// ISO 8601 date when rate limit will be lifted
     Iso8601,
 }
 
@@ -29,6 +39,12 @@ pub enum ResetTime {
 }
 
 impl ResetTime {
+    /// Create a new reset time from a header value and a reset time kind
+    ///
+    /// # Errors
+    ///
+    /// This function returns an error if the header value cannot be parsed
+    /// or if the reset time kind is unknown.
     pub fn new(value: &HeaderValue, kind: ResetTimeKind) -> Result<Self> {
         let value = value.to_str()?;
         match kind {
@@ -53,6 +69,7 @@ impl ResetTime {
     }
 
     /// Get the number of seconds until the rate limit gets lifted.
+    #[must_use]
     pub fn seconds(&self) -> usize {
         match self {
             ResetTime::Seconds(s) => *s,
@@ -60,11 +77,13 @@ impl ResetTime {
             // and then convert it to seconds.
             // There are no negative values in the seconds field, so we can safely
             // cast it to usize.
+            #[allow(clippy::cast_possible_truncation)]
             ResetTime::DateTime(d) => (*d - OffsetDateTime::now_utc()).whole_seconds() as usize,
         }
     }
 
     /// Convert reset time to duration
+    #[must_use]
     pub fn duration(&self) -> Duration {
         match self {
             ResetTime::Seconds(s) => Duration::seconds(*s as i64),
@@ -100,17 +119,26 @@ pub enum Vendor {
 /// A variant defines all relevant fields for parsing headers from a given vendor
 #[derive(Clone, Debug, PartialEq)]
 pub struct RateLimitVariant {
+    /// Vendor of the rate limit headers (e.g. Github, Twitter, etc.)
     pub vendor: Vendor,
+    /// Duration of the rate limit interval
     pub duration: Option<Duration>,
+    /// Header name for the maximum number of requests
     pub limit_header: Option<String>,
+    /// Header name for the number of used requests
     pub used_header: Option<String>,
+    /// Header name for the number of remaining requests
     pub remaining_header: String,
+    /// Header name for the reset time
     pub reset_header: String,
+    /// Kind of reset time
     pub reset_kind: ResetTimeKind,
 }
 
 impl RateLimitVariant {
-    pub fn new(
+    /// Create a new rate limit variant
+    #[must_use]
+    pub const fn new(
         vendor: Vendor,
         duration: Option<Duration>,
         limit_header: Option<String>,
@@ -131,6 +159,7 @@ impl RateLimitVariant {
     }
 }
 
+/// A rate limit header
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Limit {
     /// Maximum number of requests for the given interval
@@ -138,6 +167,11 @@ pub struct Limit {
 }
 
 impl Limit {
+    /// Create a new limit header
+    ///
+    /// # Errors
+    ///
+    /// This function returns an error if the header value cannot be parsed
     pub fn new<T: AsRef<str>>(value: T) -> Result<Self> {
         Ok(Self {
             count: convert::to_usize(value.as_ref())?,
@@ -151,20 +185,22 @@ impl From<usize> for Limit {
     }
 }
 
+/// A rate limit header for the number of used requests
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Used {
+pub(crate) struct Used {
     /// Number of used requests for the given interval
-    pub count: usize,
+    pub(crate) count: usize,
 }
 
 impl Used {
-    pub fn new(value: &str) -> Result<Self> {
+    pub(crate) fn new(value: &str) -> Result<Self> {
         Ok(Self {
             count: convert::to_usize(value)?,
         })
     }
 }
 
+/// A rate limit header for the number of remaining requests
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Remaining {
     /// Number of remaining requests for the given interval
@@ -172,6 +208,11 @@ pub struct Remaining {
 }
 
 impl Remaining {
+    /// Create a new remaining header
+    ///
+    /// # Errors
+    ///
+    /// This function returns an error if the header value cannot be parsed
     pub fn new(value: &str) -> Result<Self> {
         Ok(Self {
             count: convert::to_usize(value)?,

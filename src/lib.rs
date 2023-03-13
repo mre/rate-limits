@@ -33,7 +33,7 @@
 //! Also takes the `Retry-After` header into account when calculating the reset
 //! time.
 //!
-//! [http::HeaderMap][headermap] is supported as well:
+//! [`http::HeaderMap`][headermap] is supported as well:
 //!
 //! ```rust
 //! use std::str::FromStr;
@@ -71,6 +71,22 @@
 //! [vendor list]: https://docs.rs/rate-limits/latest/rate_limits/enum.Vendor.html
 //! [stackoverflow]: https://stackoverflow.com/questions/16022624/examples-of-http-api-rate-limiting-http-response-headers
 //! [headermap]: https://docs.rs/http/latest/http/header/struct.HeaderMap.html
+#![warn(clippy::all)]
+#![warn(
+    absolute_paths_not_starting_with_crate,
+    rustdoc::invalid_html_tags,
+    missing_copy_implementations,
+    missing_debug_implementations,
+    semicolon_in_expressions_from_macros,
+    unreachable_pub,
+    unused_crate_dependencies,
+    unused_extern_crates,
+    variant_size_differences,
+    clippy::missing_const_for_fn
+)]
+#![deny(anonymous_parameters, macro_use_extern_crate, pointer_structural_match)]
+#![deny(missing_docs)]
+#![allow(clippy::module_name_repetitions)]
 
 mod convert;
 mod error;
@@ -91,8 +107,11 @@ pub use types::{Limit, RateLimitVariant, Remaining, ResetTime, ResetTimeKind, Ve
 /// HTTP rate limits as parsed from header values
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct RateLimit {
+    /// The maximum number of requests allowed in the time window
     pub limit: usize,
+    /// The number of requests remaining in the time window
     pub remaining: usize,
+    /// The time at which the rate limit will be reset
     pub reset: ResetTime,
     /// The time window until the rate limit is lifted.
     /// It is optional, because it might not be given,
@@ -190,7 +209,7 @@ impl RateLimit {
 
         for variant in variants.iter() {
             if let Some(value) = header_map.get(&variant.reset_header) {
-                return Ok((value, variant.reset_kind.clone()));
+                return Ok((value, variant.reset_kind));
             }
         }
         Err(Error::MissingRemaining)
@@ -200,15 +219,21 @@ impl RateLimit {
         header_map.get("Retry-After")
     }
 
-    pub fn limit(&self) -> usize {
+    /// Get the number of requests allowed in the time window
+    #[must_use]
+    pub const fn limit(&self) -> usize {
         self.limit
     }
 
-    pub fn remaining(&self) -> usize {
+    /// Get the number of requests remaining in the time window
+    #[must_use]
+    pub const fn remaining(&self) -> usize {
         self.remaining
     }
 
-    pub fn reset(&self) -> ResetTime {
+    /// Get the time at which the rate limit will be reset
+    #[must_use]
+    pub const fn reset(&self) -> ResetTime {
         self.reset
     }
 }
@@ -281,7 +306,7 @@ mod tests {
         let v = HeaderValue::from_str("1350085394").unwrap();
         assert_eq!(
             ResetTime::new(&v, ResetTimeKind::Timestamp).unwrap(),
-            ResetTime::DateTime(OffsetDateTime::from_unix_timestamp(1350085394).unwrap())
+            ResetTime::DateTime(OffsetDateTime::from_unix_timestamp(1_350_085_394).unwrap())
         );
     }
 
@@ -342,7 +367,7 @@ x-ratelimit-reset: 1350085394
         assert_eq!(rate.remaining(), 4987);
         assert_eq!(
             rate.reset(),
-            ResetTime::DateTime(OffsetDateTime::from_unix_timestamp(1350085394).unwrap())
+            ResetTime::DateTime(OffsetDateTime::from_unix_timestamp(1_350_085_394).unwrap())
         );
     }
 
@@ -374,7 +399,7 @@ x-ratelimit-reset: 1350085394
         assert_eq!(rate.remaining(), 0);
         assert_eq!(
             rate.reset(),
-            ResetTime::DateTime(OffsetDateTime::from_unix_timestamp(1609844400).unwrap())
+            ResetTime::DateTime(OffsetDateTime::from_unix_timestamp(1_609_844_400).unwrap())
         );
     }
 

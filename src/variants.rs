@@ -8,7 +8,7 @@ use time::Duration;
 ///
 /// Variants will be checked in order.
 /// The casing of header names is significant to separate between different vendors
-pub static RATE_LIMIT_HEADERS: Lazy<Mutex<Vec<RateLimitVariant>>> = Lazy::new(|| {
+pub(crate) static RATE_LIMIT_HEADERS: Lazy<Mutex<Vec<RateLimitVariant>>> = Lazy::new(|| {
     Mutex::new(vec![
         // Headers as defined in https://tools.ietf.org/id/draft-polli-ratelimit-headers-00.html
         // RateLimit-Limit:     Holds the requests quota in the time window;

@@ -69,7 +69,7 @@ impl ResetTime {
         match self {
             ResetTime::Seconds(s) => Duration::seconds(*s as i64),
             ResetTime::DateTime(d) => {
-                Duration::seconds((*d - OffsetDateTime::now_utc()).whole_seconds() as i64)
+                Duration::seconds((*d - OffsetDateTime::now_utc()).whole_seconds())
             }
         }
     }

@@ -17,9 +17,9 @@ keywords = [
 
 [dependencies]
 displaydoc = "0.2.3"
-headers = "0.3.7"
-http = "0.2.8"
-indoc = "1.0.6"
-once_cell = "1.12.0"
-thiserror = "1.0.31"
-time = { version = "0.3.9", features = ["parsing", "macros"] }
+headers = "0.3.8"
+http = "0.2.9"
+indoc = "2.0.1"
+once_cell = "1.17.1"
+thiserror = "1.0.39"
+time = { version = "0.3.20", features = ["parsing", "macros"] }

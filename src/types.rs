@@ -298,3 +298,49 @@ impl From<HeaderMap> for CaseSensitiveHeaderMap {
         cs_map
     }
 }
+
+impl From<&HeaderMap> for CaseSensitiveHeaderMap {
+    fn from(headers: &HeaderMap) -> Self {
+        let mut cs_map = CaseSensitiveHeaderMap::new();
+        for (name, value) in headers.iter() {
+            cs_map.insert(name.as_str().to_string(), value.clone());
+        }
+        cs_map
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_convert_from_header_map() {
+        let mut headers = HeaderMap::new();
+        headers.insert("X-RateLimit-Limit", "100".parse().unwrap());
+        headers.insert("X-RateLimit-Remaining", "99".parse().unwrap());
+        headers.insert("X-RateLimit-Reset", "1234567890".parse().unwrap());
+
+        let cs_headers = CaseSensitiveHeaderMap::from(&headers);
+        assert_eq!(
+            cs_headers,
+            CaseSensitiveHeaderMap {
+                inner: vec![
+                    (
+                        "x-ratelimit-limit".to_string(),
+                        HeaderValue::from_static("100")
+                    ),
+                    (
+                        "x-ratelimit-remaining".to_string(),
+                        HeaderValue::from_static("99")
+                    ),
+                    (
+                        "x-ratelimit-reset".to_string(),
+                        HeaderValue::from_static("1234567890")
+                    )
+                ]
+                .into_iter()
+                .collect()
+            }
+        );
+    }
+}

@@ -100,7 +100,7 @@ use headers::HeaderValue;
 use types::CaseSensitiveHeaderMap;
 use variants::RATE_LIMIT_HEADERS;
 
-use time::Duration;
+use time::{format_description::well_known::Rfc2822, Date, Duration};
 use types::Used;
 pub use types::{Limit, RateLimitVariant, Remaining, ResetTime, ResetTimeKind, Vendor};
 
@@ -145,8 +145,12 @@ impl RateLimit {
         };
 
         // https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Retry-After
-        let reset = if let Some(seconds) = Self::get_retry_after_header(&headers) {
-            ResetTime::new(seconds, ResetTimeKind::Seconds)?
+        let reset = if let Some(date_or_seconds) = Self::get_retry_after_header(&headers) {
+            if Date::parse(date_or_seconds.to_str()?, &Rfc2822).is_ok() {
+                ResetTime::new(date_or_seconds, ResetTimeKind::ImfFixdate)?
+            } else {
+                ResetTime::new(date_or_seconds, ResetTimeKind::Seconds)?
+            }
         } else {
             let (value, kind) = Self::get_reset_header(&headers)?;
             ResetTime::new(value, kind)?
@@ -281,7 +285,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_retry_after() {
+    fn parse_retry_after_seconds() {
         let map = CaseSensitiveHeaderMap::from_str("Retry-After: 30").unwrap();
         let retry = RateLimit::get_retry_after_header(&map).unwrap();
 
@@ -404,7 +408,7 @@ x-ratelimit-reset: 1350085394
     }
 
     #[test]
-    fn retry_after_takes_precedence_over_reset() {
+    fn retry_after_seconds_takes_precedence_over_reset() {
         let headers = indoc! {"
             X-Ratelimit-Used: 100
             X-Ratelimit-Remaining: 22
@@ -416,5 +420,23 @@ x-ratelimit-reset: 1350085394
         assert_eq!(rate.limit(), 122);
         assert_eq!(rate.remaining(), 22);
         assert_eq!(rate.reset(), ResetTime::Seconds(20));
+    }
+
+    #[test]
+    fn retry_after_date_takes_precedence_over_reset() {
+        let headers = indoc! {"
+            X-Ratelimit-Used: 100
+            X-Ratelimit-Remaining: 22
+            X-Ratelimit-Reset: 30
+            Retry-After: Wed, 21 Oct 2015 07:28:00 GMT
+        "};
+
+        let rate = RateLimit::from_str(headers).unwrap();
+        assert_eq!(rate.limit(), 122);
+        assert_eq!(rate.remaining(), 22);
+        assert_eq!(
+            rate.reset(),
+            ResetTime::DateTime(datetime!(2015-10-21 7:28:00.0 UTC))
+        );
     }
 }

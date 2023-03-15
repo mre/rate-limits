@@ -4,6 +4,7 @@ use std::str::FromStr;
 use crate::convert;
 use crate::error::{Error, Result};
 use headers::{HeaderMap, HeaderName, HeaderValue};
+use time::format_description::well_known::{Iso8601, Rfc2822};
 use time::{Duration, OffsetDateTime, PrimitiveDateTime};
 
 const HEADER_SEPARATOR: &str = ":";
@@ -55,14 +56,11 @@ impl ResetTime {
             )),
             ResetTimeKind::Iso8601 => {
                 // https://github.com/time-rs/time/issues/378
-                let format = time::format_description::parse("YYYYMMDDTHHMMSSZ").unwrap();
-                let d = PrimitiveDateTime::parse(value, &format).map_err(Error::Parse)?;
+                let d = PrimitiveDateTime::parse(value, &Iso8601::PARSING).map_err(Error::Parse)?;
                 Ok(ResetTime::DateTime(d.assume_utc()))
             }
             ResetTimeKind::ImfFixdate => {
-                let d =
-                    PrimitiveDateTime::parse(value, &time::format_description::well_known::Rfc2822)
-                        .map_err(Error::Parse)?;
+                let d = PrimitiveDateTime::parse(value, &Rfc2822).map_err(Error::Parse)?;
                 Ok(ResetTime::DateTime(d.assume_utc()))
             }
         }

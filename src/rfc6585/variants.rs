@@ -1,7 +1,9 @@
 use once_cell::sync::Lazy;
 use std::sync::Mutex;
 
-use crate::types::{RateLimitVariant, ResetTimeKind, Vendor};
+use crate::reset_time::ResetTimeKind;
+
+use super::types::{RateLimitVariant, Vendor};
 use time::Duration;
 
 /// Different types of rate-limit headers

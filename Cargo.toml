@@ -24,4 +24,5 @@ thiserror = "1.0.39"
 time = { version = "0.3.20", features = ["parsing", "macros"] }
 
 [dev-dependencies]
+doc-comment = "0.3.3"
 indoc = "2.0.1"

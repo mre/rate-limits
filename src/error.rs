@@ -18,6 +18,12 @@ pub enum Error {
     /// HTTP x-ratelimit-reset header not found
     MissingReset,
 
+    /// HTTP Retry-After header not found
+    MissingRetryAfter,
+
+    /// Invalid Retry-After header value
+    InvalidRetryAfter(String),
+
     /// Header does not contain colon
     HeaderWithoutColon(String),
 

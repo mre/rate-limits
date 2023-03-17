@@ -10,7 +10,7 @@ also supported on a best effort basis. See [vendor list] for support.
 use indoc::indoc;
 use std::str::FromStr;
 use time::{OffsetDateTime, Duration};
-use rate_limits::{Vendor, RateLimit, ResetTime};
+use rate_limits::{Vendor, RateLimit, ResetTime, rfc6585};
 
 let headers = indoc! {"
     x-ratelimit-limit: 5000
@@ -19,8 +19,8 @@ let headers = indoc! {"
 "};
 
 assert_eq!(
-    RateLimit::from_str(headers).unwrap(),
-    RateLimit {
+    RateLimit::new(headers).unwrap(),
+    RateLimit::Rfc6585(rfc6585::RateLimit {
         limit: 5000,
         remaining: 4987,
         reset: ResetTime::DateTime(
@@ -28,19 +28,19 @@ assert_eq!(
         ),
         window: Some(Duration::HOUR),
         vendor: Vendor::Github
-    },
+    }),
 );
 ```
 
 Also takes the `Retry-After` header into account when calculating the reset
 time.
 
-[http::HeaderMap][headermap] is supported as well:
+[`http::HeaderMap`][headermap] is supported as well:
 
 ```rust
 use std::str::FromStr;
 use time::{OffsetDateTime, Duration};
-use rate_limits::{Vendor, RateLimit, ResetTime};
+use rate_limits::{Vendor, RateLimit, ResetTime, rfc6585};
 use http::header::HeaderMap;
 
 let mut headers = HeaderMap::new();
@@ -50,7 +50,7 @@ headers.insert("X-RATELIMIT-RESET", "1350085394".parse().unwrap());
 
 assert_eq!(
     RateLimit::new(headers).unwrap(),
-    RateLimit {
+    RateLimit::Rfc6585(rfc6585::RateLimit {
         limit: 5000,
         remaining: 4987,
         reset: ResetTime::DateTime(
@@ -58,16 +58,22 @@ assert_eq!(
         ),
         window: Some(Duration::HOUR),
         vendor: Vendor::Github
-    },
+    }),
 );
 ```
 
+### Further development
+
+There is a new [IETF draft][draft_new] which supersedes the old "polli" draft.
+It introduces a new `RateLimit-Policy` header which specifies the rate limit
+quota policy. The goal is to support this new draft in this crate as well.
+
 ### Other resources:
 
-* [Examples of HTTP API Rate Limiting HTTP Response][stackoverflow]
+- [Examples of HTTP API Rate Limiting HTTP Response][stackoverflow]
 
-
-[draft]: https://tools.ietf.org/id/draft-polli-ratelimit-headers-00.html
+[draft]: https://datatracker.ietf.org/doc/html/draft-polli-ratelimit-headers-00
+[draft_new]: https://datatracker.ietf.org/doc/draft-ietf-httpapi-ratelimit-headers/
 [headers]: https://stackoverflow.com/a/16022625/270334
 [github]: https://docs.github.com/en/rest/overview/resources-in-the-rest-api
 [vendor list]: https://docs.rs/rate-limits/latest/rate_limits/enum.Vendor.html

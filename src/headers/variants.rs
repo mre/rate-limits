@@ -1,15 +1,17 @@
 use once_cell::sync::Lazy;
-use std::sync::Mutex;
 
-use crate::types::{RateLimitVariant, ResetTimeKind, Vendor};
+use crate::reset_time::ResetTimeKind;
+
+use super::types::{RateLimitVariant, Vendor};
 use time::Duration;
 
 /// Different types of rate-limit headers
 ///
 /// Variants will be checked in order.
-/// The casing of header names is significant to separate between different vendors
-pub(crate) static RATE_LIMIT_HEADERS: Lazy<Mutex<Vec<RateLimitVariant>>> = Lazy::new(|| {
-    Mutex::new(vec![
+/// The casing of header names is significant to separate between different
+/// vendors
+pub(crate) static RATE_LIMIT_HEADERS: Lazy<Vec<RateLimitVariant>> = Lazy::new(|| {
+    vec![
         // Headers as defined in https://tools.ietf.org/id/draft-polli-ratelimit-headers-00.html
         // RateLimit-Limit:     Holds the requests quota in the time window;
         // RateLimit-Remaining: Holds the remaining requests quota in the current window;
@@ -102,5 +104,5 @@ pub(crate) static RATE_LIMIT_HEADERS: Lazy<Mutex<Vec<RateLimitVariant>>> = Lazy:
             "X-RateLimit-Next".to_string(),
             ResetTimeKind::Iso8601,
         ),
-    ])
+    ]
 });

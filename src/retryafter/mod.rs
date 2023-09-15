@@ -1,6 +1,6 @@
 //! Retry-After header parsing
 //!
-//! See https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Retry-After
+//! See <https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Retry-After>
 use std::str::FromStr;
 
 use headers::HeaderValue;
@@ -23,7 +23,7 @@ pub struct RateLimit {
 impl RateLimit {
     /// Rate limit implementation based on `Retry-After` header value
     ///
-    /// See https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Retry-After
+    /// See <https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Retry-After>
     pub fn new<T: Into<CaseSensitiveHeaderMap>>(headers: T) -> std::result::Result<Self, Error> {
         let headers = headers.into();
         let reset = match Self::get_retry_after_header(&headers) {

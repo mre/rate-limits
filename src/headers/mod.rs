@@ -43,14 +43,19 @@ impl Headers {
     /// There are different header names for various websites
     /// Github, Vimeo, Twitter, Imgur, etc have their own headers.
     /// Without additional context, the parsing is done on a best-effort basis.
+    /// 
+    /// # Errors
+    /// 
+    /// This function returns an error if the given header map does not contain
+    /// all required headers or if the header values cannot be parsed.
     pub fn new<T: Into<CaseSensitiveHeaderMap>>(headers: T) -> std::result::Result<Self, Error> {
         let headers = headers.into();
-        let value = Self::get_remaining_header(&headers)?;
+        let value = Self::get_remaining(&headers)?;
         let remaining = Remaining::new(value.to_str()?)?;
 
-        let (limit, variant) = if let Ok((limit, variant)) = Self::get_rate_limit_header(&headers) {
+        let (limit, variant) = if let Ok((limit, variant)) = Self::get_rate_limit(&headers) {
             (Limit::new(limit.to_str()?)?, variant)
-        } else if let Ok((used, variant)) = Self::get_used_header(&headers) {
+        } else if let Ok((used, variant)) = Self::get_used(&headers) {
             // The site provides a `used` header, but no `limit` header.
             // Therefore we have to calculate the limit from used and remaining.
             let used = Used::new(used.to_str()?)?;
@@ -60,7 +65,7 @@ impl Headers {
             return Err(Error::MissingUsed);
         };
 
-        let (value, kind) = Self::get_reset_header(&headers)?;
+        let (value, kind) = Self::get_reset(&headers)?;
         let reset = ResetTime::new(value, kind)?;
 
         Ok(Headers {
@@ -72,7 +77,9 @@ impl Headers {
         })
     }
 
-    fn get_rate_limit_header(
+    /// Get the number of requests allowed in the time window
+    /// from the given header map
+    fn get_rate_limit(
         header_map: &CaseSensitiveHeaderMap,
     ) -> Result<(&HeaderValue, RateLimitVariant)> {
         let variants = RATE_LIMIT_HEADERS.lock().map_err(|_| Error::Lock)?;
@@ -87,7 +94,9 @@ impl Headers {
         Err(Error::MissingLimit)
     }
 
-    fn get_used_header(
+    /// Get the number of requests used in the time window
+    /// from the given header map
+    fn get_used(
         header_map: &CaseSensitiveHeaderMap,
     ) -> Result<(&HeaderValue, RateLimitVariant)> {
         let variants = RATE_LIMIT_HEADERS.lock().map_err(|_| Error::Lock)?;
@@ -102,7 +111,9 @@ impl Headers {
         Err(Error::MissingUsed)
     }
 
-    fn get_remaining_header(header_map: &CaseSensitiveHeaderMap) -> Result<&HeaderValue> {
+    /// Get the number of requests remaining in the time window
+    /// from the given header map
+    fn get_remaining(header_map: &CaseSensitiveHeaderMap) -> Result<&HeaderValue> {
         let variants = RATE_LIMIT_HEADERS.lock().map_err(|_| Error::Lock)?;
 
         for variant in variants.iter() {
@@ -113,7 +124,9 @@ impl Headers {
         Err(Error::MissingRemaining)
     }
 
-    fn get_reset_header(
+    /// Get the time at which the rate limit will be reset
+    /// from the given header map
+    fn get_reset(
         header_map: &CaseSensitiveHeaderMap,
     ) -> Result<(&HeaderValue, ResetTimeKind)> {
         let variants = RATE_LIMIT_HEADERS.lock().map_err(|_| Error::Lock)?;
@@ -177,11 +190,11 @@ mod tests {
     #[test]
     fn parse_vendor() {
         let map = CaseSensitiveHeaderMap::from_str("x-ratelimit-limit: 5000").unwrap();
-        let (_, variant) = Headers::get_rate_limit_header(&map).unwrap();
+        let (_, variant) = Headers::get_rate_limit(&map).unwrap();
         assert_eq!(variant.vendor, Vendor::Github);
 
         let map = CaseSensitiveHeaderMap::from_str("RateLimit-Limit: 5000").unwrap();
-        let (_, variant) = Headers::get_rate_limit_header(&map).unwrap();
+        let (_, variant) = Headers::get_rate_limit(&map).unwrap();
         assert_eq!(variant.vendor, Vendor::Standard);
     }
 

@@ -4,7 +4,7 @@ mod cli {
     use rate_limits::{RateLimit, ResetTime, Vendor};
     use time::{Duration, OffsetDateTime};
 
-    use rate_limits::rfc6585;
+    use rate_limits::headers;
 
     #[test]
     fn test_example() {
@@ -15,7 +15,7 @@ mod cli {
 
         assert_eq!(
             RateLimit::new(headers).unwrap(),
-            RateLimit::Rfc6585(rfc6585::RateLimit {
+            RateLimit::Rfc6585(headers::Headers {
                 limit: 5000,
                 remaining: 4987,
                 reset: ResetTime::DateTime(

@@ -21,7 +21,7 @@ pub(crate) use types::{Limit, RateLimitVariant, Remaining};
 
 /// HTTP rate limits as parsed from header values
 #[derive(Copy, Clone, Debug, PartialEq)]
-pub struct RateLimit {
+pub struct Headers {
     /// The maximum number of requests allowed in the time window
     pub limit: usize,
     /// The number of requests remaining in the time window
@@ -36,7 +36,7 @@ pub struct RateLimit {
     pub vendor: Vendor,
 }
 
-impl RateLimit {
+impl Headers {
     /// Extracts rate limits from `Rate-Limit-...` HTTP headers separated by
     /// newlines. These rate limits are commonly used by APIs.
     ///
@@ -63,7 +63,7 @@ impl RateLimit {
         let (value, kind) = Self::get_reset_header(&headers)?;
         let reset = ResetTime::new(value, kind)?;
 
-        Ok(RateLimit {
+        Ok(Headers {
             limit: limit.count,
             remaining: remaining.count,
             reset,
@@ -145,11 +145,11 @@ impl RateLimit {
     }
 }
 
-impl FromStr for RateLimit {
+impl FromStr for Headers {
     type Err = Error;
 
     fn from_str(map: &str) -> Result<Self> {
-        RateLimit::new(CaseSensitiveHeaderMap::from_str(map)?)
+        Headers::new(CaseSensitiveHeaderMap::from_str(map)?)
     }
 }
 
@@ -177,11 +177,11 @@ mod tests {
     #[test]
     fn parse_vendor() {
         let map = CaseSensitiveHeaderMap::from_str("x-ratelimit-limit: 5000").unwrap();
-        let (_, variant) = RateLimit::get_rate_limit_header(&map).unwrap();
+        let (_, variant) = Headers::get_rate_limit_header(&map).unwrap();
         assert_eq!(variant.vendor, Vendor::Github);
 
         let map = CaseSensitiveHeaderMap::from_str("RateLimit-Limit: 5000").unwrap();
-        let (_, variant) = RateLimit::get_rate_limit_header(&map).unwrap();
+        let (_, variant) = Headers::get_rate_limit_header(&map).unwrap();
         assert_eq!(variant.vendor, Vendor::Standard);
     }
 
@@ -259,7 +259,7 @@ x-ratelimit-reset: 1350085394
             x-ratelimit-reset: 1350085394
         "};
 
-        let rate = RateLimit::from_str(headers).unwrap();
+        let rate = Headers::from_str(headers).unwrap();
         assert_eq!(rate.limit(), 5000);
         assert_eq!(rate.remaining(), 4987);
         assert_eq!(
@@ -276,7 +276,7 @@ x-ratelimit-reset: 1350085394
             X-Ratelimit-Reset: 30
         "};
 
-        let rate = RateLimit::from_str(headers).unwrap();
+        let rate = Headers::from_str(headers).unwrap();
         assert_eq!(rate.limit(), 122);
         assert_eq!(rate.remaining(), 22);
         assert_eq!(rate.reset(), ResetTime::Seconds(30));
@@ -291,7 +291,7 @@ x-ratelimit-reset: 1350085394
             RateLimit-Reset: 1609844400 
         "};
 
-        let rate = RateLimit::from_str(headers).unwrap();
+        let rate = Headers::from_str(headers).unwrap();
         assert_eq!(rate.limit(), 60);
         assert_eq!(rate.remaining(), 0);
         assert_eq!(

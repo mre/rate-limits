@@ -10,7 +10,7 @@ also supported on a best effort basis. See [vendor list] for support.
 use indoc::indoc;
 use std::str::FromStr;
 use time::{OffsetDateTime, Duration};
-use rate_limits::{Vendor, RateLimit, ResetTime, rfc6585};
+use rate_limits::{Vendor, RateLimit, ResetTime, Headers};
 
 let headers = indoc! {"
     x-ratelimit-limit: 5000
@@ -20,7 +20,7 @@ let headers = indoc! {"
 
 assert_eq!(
     RateLimit::new(headers).unwrap(),
-    RateLimit::Rfc6585(rfc6585::RateLimit {
+    RateLimit::Rfc6585(Headers {
         limit: 5000,
         remaining: 4987,
         reset: ResetTime::DateTime(
@@ -40,7 +40,7 @@ time.
 ```rust
 use std::str::FromStr;
 use time::{OffsetDateTime, Duration};
-use rate_limits::{Vendor, RateLimit, ResetTime, rfc6585};
+use rate_limits::{Vendor, RateLimit, ResetTime, Headers};
 use http::header::HeaderMap;
 
 let mut headers = HeaderMap::new();
@@ -50,7 +50,7 @@ headers.insert("X-RATELIMIT-RESET", "1350085394".parse().unwrap());
 
 assert_eq!(
     RateLimit::new(headers).unwrap(),
-    RateLimit::Rfc6585(rfc6585::RateLimit {
+    RateLimit::Rfc6585(Headers {
         limit: 5000,
         remaining: 4987,
         reset: ResetTime::DateTime(

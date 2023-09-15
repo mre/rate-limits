@@ -20,16 +20,16 @@ mod convert;
 mod error;
 mod reset_time;
 
+pub mod headers;
 pub mod retryafter;
-pub mod rfc6585;
 
 use std::str::FromStr;
 
 use casesensitive_headermap::CaseSensitiveHeaderMap;
 use error::{Error, Result};
 
+pub use headers::{Headers, Vendor};
 pub use reset_time::ResetTime;
-pub use rfc6585::Vendor;
 
 /// Rate Limit information, parsed from HTTP headers.
 ///
@@ -45,7 +45,7 @@ pub use rfc6585::Vendor;
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum RateLimit {
     /// Rate limit information as per the [IETF "Polly" draft][ietf].
-    Rfc6585(rfc6585::RateLimit),
+    Rfc6585(headers::Headers),
     /// Rate limit information as per the [Retry-After][retryafter] header.
     RetryAfter(retryafter::RateLimit),
 }
@@ -54,7 +54,7 @@ impl RateLimit {
     /// Create a new `RateLimit` from a `http::HeaderMap`.
     pub fn new<T: Into<CaseSensitiveHeaderMap>>(headers: T) -> std::result::Result<Self, Error> {
         let headers = headers.into();
-        let rfc6585 = rfc6585::RateLimit::new(headers.clone());
+        let rfc6585 = headers::Headers::new(headers.clone());
         let retryafter = retryafter::RateLimit::new(headers);
 
         match (rfc6585, retryafter) {

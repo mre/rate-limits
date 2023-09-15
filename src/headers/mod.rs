@@ -43,9 +43,9 @@ impl Headers {
     /// There are different header names for various websites
     /// Github, Vimeo, Twitter, Imgur, etc have their own headers.
     /// Without additional context, the parsing is done on a best-effort basis.
-    /// 
+    ///
     /// # Errors
-    /// 
+    ///
     /// This function returns an error if the given header map does not contain
     /// all required headers or if the header values cannot be parsed.
     pub fn new<T: Into<CaseSensitiveHeaderMap>>(headers: T) -> std::result::Result<Self, Error> {
@@ -82,7 +82,7 @@ impl Headers {
     fn get_rate_limit(
         header_map: &CaseSensitiveHeaderMap,
     ) -> Result<(&HeaderValue, RateLimitVariant)> {
-        let variants = RATE_LIMIT_HEADERS.lock().map_err(|_| Error::Lock)?;
+        let variants = &RATE_LIMIT_HEADERS;
 
         for variant in variants.iter() {
             if let Some(limit) = &variant.limit_header {
@@ -96,10 +96,8 @@ impl Headers {
 
     /// Get the number of requests used in the time window
     /// from the given header map
-    fn get_used(
-        header_map: &CaseSensitiveHeaderMap,
-    ) -> Result<(&HeaderValue, RateLimitVariant)> {
-        let variants = RATE_LIMIT_HEADERS.lock().map_err(|_| Error::Lock)?;
+    fn get_used(header_map: &CaseSensitiveHeaderMap) -> Result<(&HeaderValue, RateLimitVariant)> {
+        let variants = &RATE_LIMIT_HEADERS;
 
         for variant in variants.iter() {
             if let Some(used) = &variant.used_header {
@@ -114,7 +112,7 @@ impl Headers {
     /// Get the number of requests remaining in the time window
     /// from the given header map
     fn get_remaining(header_map: &CaseSensitiveHeaderMap) -> Result<&HeaderValue> {
-        let variants = RATE_LIMIT_HEADERS.lock().map_err(|_| Error::Lock)?;
+        let variants = &RATE_LIMIT_HEADERS;
 
         for variant in variants.iter() {
             if let Some(value) = header_map.get(&variant.remaining_header) {
@@ -126,10 +124,8 @@ impl Headers {
 
     /// Get the time at which the rate limit will be reset
     /// from the given header map
-    fn get_reset(
-        header_map: &CaseSensitiveHeaderMap,
-    ) -> Result<(&HeaderValue, ResetTimeKind)> {
-        let variants = RATE_LIMIT_HEADERS.lock().map_err(|_| Error::Lock)?;
+    fn get_reset(header_map: &CaseSensitiveHeaderMap) -> Result<(&HeaderValue, ResetTimeKind)> {
+        let variants = &RATE_LIMIT_HEADERS;
 
         for variant in variants.iter() {
             if let Some(value) = header_map.get(&variant.reset_header) {

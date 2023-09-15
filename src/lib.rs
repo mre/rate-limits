@@ -73,7 +73,7 @@ impl RateLimit {
 
     /// Get `reset` time.
     /// This is the time when the rate limit will be reset.
-    pub fn reset(&self) -> ResetTime {
+    pub const fn reset(&self) -> ResetTime {
         match self {
             Self::Rfc6585(rfc6585) => rfc6585.reset,
             Self::RetryAfter(retryafter) => retryafter.reset,
@@ -83,7 +83,7 @@ impl RateLimit {
     /// Get `limit` value.
     ///
     /// This is the maximum number of requests that can be made in a given time window.
-    pub fn limit(&self) -> Option<usize> {
+    pub const fn limit(&self) -> Option<usize> {
         match self {
             Self::Rfc6585(rfc6585) => Some(rfc6585.limit),
             Self::RetryAfter(_) => None,
@@ -93,7 +93,7 @@ impl RateLimit {
     /// Get `remaining` value.
     ///
     /// This is the number of requests remaining in the current time window.
-    pub fn remaining(&self) -> Option<usize> {
+    pub const fn remaining(&self) -> Option<usize> {
         match self {
             Self::Rfc6585(rfc6585) => Some(rfc6585.remaining),
             Self::RetryAfter(_) => None,

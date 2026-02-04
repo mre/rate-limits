@@ -27,9 +27,21 @@ use std::str::FromStr;
 
 use error::{Error, Result};
 use http::HeaderMap;
+use time::Duration;
 
 pub use headers::{Headers, Vendor};
 pub use reset_time::ResetTime;
+
+/// The status of the rate limit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Status {
+    /// The rate limit has not been reached.
+    /// You can make requests immediately.
+    Ready,
+    /// The rate limit has been reached.
+    /// The associated duration is the time to wait until the limit resets.
+    Wait(Duration),
+}
 
 /// Rate Limit information, parsed from HTTP headers.
 ///
@@ -58,7 +70,9 @@ impl RateLimit {
 
         match (rfc6585, retryafter) {
             (Ok(rfc6585), Ok(retryafter)) => {
-                if rfc6585.reset > retryafter.reset {
+                // If both are present, we pick the one that requires us to wait longer.
+                // This is a pessimistic approach to ensure we don't hit the rate limit.
+                if rfc6585.reset.duration() > retryafter.reset.duration() {
                     Ok(Self::Rfc6585(rfc6585))
                 } else {
                     Ok(Self::RetryAfter(retryafter))
@@ -67,6 +81,23 @@ impl RateLimit {
             (Ok(rfc6585), Err(_)) => Ok(Self::Rfc6585(rfc6585)),
             (Err(_), Ok(retryafter)) => Ok(Self::RetryAfter(retryafter)),
             (Err(e), Err(_)) => Err(e),
+        }
+    }
+
+    /// Check if the rate limit has been reached.
+    pub fn is_limited(&self) -> bool {
+        match self {
+            Self::Rfc6585(headers) => headers.remaining == 0,
+            Self::RetryAfter(_) => true,
+        }
+    }
+
+    /// Get the current status of the rate limit.
+    pub fn status(&self) -> Status {
+        if self.is_limited() {
+            Status::Wait(self.reset().duration())
+        } else {
+            Status::Ready
         }
     }
 
@@ -134,13 +165,13 @@ mod tests {
             X-Ratelimit-Used: 100
             X-Ratelimit-Remaining: 22
             X-Ratelimit-Reset: 30
-            Retry-After: Wed, 21 Oct 2015 07:28:00 GMT
+            Retry-After: Wed, 21 Oct 2099 07:28:00 GMT
         "};
 
         let rate = RateLimit::from_str(headers).unwrap();
         assert_eq!(
             rate.reset(),
-            ResetTime::DateTime(datetime!(2015-10-21 7:28:00.0 UTC))
+            ResetTime::DateTime(datetime!(2099-10-21 7:28:00.0 UTC))
         );
     }
 
@@ -155,5 +186,29 @@ mod tests {
 
         let rate = RateLimit::from_str(headers).unwrap();
         assert_eq!(rate.reset(), ResetTime::Seconds(30));
+    }
+
+    #[test]
+    fn test_status_is_limited() {
+        let headers = indoc! {"
+            RateLimit-Limit: 10
+            RateLimit-Remaining: 0
+            RateLimit-Reset: 30
+        "};
+        let rate = RateLimit::from_str(headers).unwrap();
+        assert!(rate.is_limited());
+        match rate.status() {
+            Status::Wait(d) => assert_eq!(d, time::Duration::seconds(30)),
+            _ => panic!("Expected Status::Wait"),
+        }
+
+        let headers = indoc! {"
+            RateLimit-Limit: 10
+            RateLimit-Remaining: 1
+            RateLimit-Reset: 30
+        "};
+        let rate = RateLimit::from_str(headers).unwrap();
+        assert!(!rate.is_limited());
+        assert_eq!(rate.status(), Status::Ready);
     }
 }

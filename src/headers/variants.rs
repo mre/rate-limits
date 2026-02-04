@@ -17,7 +17,7 @@ pub(crate) static RATE_LIMIT_HEADERS: Lazy<Vec<RateLimitVariant>> = Lazy::new(||
         // RateLimit-Remaining: Holds the remaining requests quota in the current window;
         // RateLimit-Reset:     Holds the time remaining in the current window, specified in seconds or as a timestamp;
         RateLimitVariant::new(
-            Vendor::Standard,
+            Vendor::IETF_DRAFT,
             None,
             Some("RateLimit-Limit".to_string()),
             None,

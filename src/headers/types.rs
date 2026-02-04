@@ -10,7 +10,7 @@ use time::Duration;
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum Vendor {
     /// Rate limit headers as defined in the `polli-ratelimit-headers-00` draft
-    Standard,
+    IETF_DRAFT,
     /// Akamai rate limit headers
     Akamai,
     /// Github API rate limit headers

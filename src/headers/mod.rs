@@ -175,7 +175,7 @@ mod tests {
         )
         .unwrap();
         let variant = Headers::find_variant(&map).unwrap();
-        assert_eq!(variant.vendor, Vendor::Standard);
+        assert_eq!(variant.vendor, Vendor::IETF_DRAFT);
     }
 
     #[test]

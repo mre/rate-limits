@@ -62,7 +62,7 @@ impl Headers {
         } else if let Some(used) = &variant.used_header {
             let value = headers.get(used).ok_or(Error::MissingUsed)?;
             let used = Used::new(value.to_str()?)?;
-            Limit::from(used.count + remaining.count)
+            Limit::from(used.count.saturating_add(remaining.count))
         } else {
             return Err(Error::MissingLimit);
         };
@@ -175,7 +175,7 @@ mod tests {
         )
         .unwrap();
         let variant = Headers::find_variant(&map).unwrap();
-        assert_eq!(variant.vendor, Vendor::IETF_DRAFT);
+        assert_eq!(variant.vendor, Vendor::PolliDraft);
     }
 
     #[test]

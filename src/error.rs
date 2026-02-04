@@ -18,6 +18,9 @@ pub enum Error {
     /// HTTP x-ratelimit-reset header not found
     MissingReset,
 
+    /// No matching rate limit variant found
+    NoMatchingVariant,
+
     /// HTTP Retry-After header not found
     MissingRetryAfter,
 

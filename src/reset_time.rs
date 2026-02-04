@@ -77,10 +77,17 @@ impl ResetTime {
             ResetTime::Seconds(s) => *s,
             // OffsetDateTime is not timezone aware, so we need to convert it to UTC
             // and then convert it to seconds.
-            // There are no negative values in the seconds field, so we can safely
-            // cast it to usize.
+            // If the reset time is in the past, we return 0.
             #[allow(clippy::cast_possible_truncation)]
-            ResetTime::DateTime(d) => (*d - OffsetDateTime::now_utc()).whole_seconds() as usize,
+            ResetTime::DateTime(d) => {
+                let diff = *d - OffsetDateTime::now_utc();
+                let seconds = diff.whole_seconds();
+                if seconds < 0 {
+                    0
+                } else {
+                    seconds as usize
+                }
+            }
         }
     }
 

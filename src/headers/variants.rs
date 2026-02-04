@@ -12,7 +12,7 @@ use time::Duration;
 /// vendors
 pub(crate) static RATE_LIMIT_HEADERS: Lazy<Vec<RateLimitVariant>> = Lazy::new(|| {
     vec![
-        // Headers as defined in https://tools.ietf.org/id/draft-polli-ratelimit-headers-00.html
+        // IETF Draft Headers (https://datatracker.ietf.org/doc/html/draft-polli-ratelimit-headers-00)
         // RateLimit-Limit:     Holds the requests quota in the time window;
         // RateLimit-Remaining: Holds the remaining requests quota in the current window;
         // RateLimit-Reset:     Holds the time remaining in the current window, specified in seconds or as a timestamp;
@@ -38,7 +38,7 @@ pub(crate) static RATE_LIMIT_HEADERS: Lazy<Vec<RateLimitVariant>> = Lazy::new(||
             "X-Ratelimit-Reset".to_string(),
             ResetTimeKind::Seconds,
         ),
-        // Linear (https://developers.linear.app/docs/graphql/working-with-the-graphql-api/rate-limiting)
+        // Linear (https://linear.app/developers/rate-limiting#api-request-limits)
         // X-RateLimit-Requests-Limit       The maximum number of API requests you're permitted to make per hour.
         // X-RateLimit-Requests-Remaining   The number of API requests remaining in the current rate limit window.
         // X-RateLimit-Requests-Reset       The time at which the current rate limit window resets in UTC epoch milliseconds.
@@ -51,7 +51,7 @@ pub(crate) static RATE_LIMIT_HEADERS: Lazy<Vec<RateLimitVariant>> = Lazy::new(||
             "x-ratelimit-requests-reset".to_string(),
             ResetTimeKind::TimestampMillis,
         ),
-        // Github (https://docs.github.com/en/rest/overview/resources-in-the-rest-api#rate-limit-http-headers)
+        // Github (https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api?apiVersion=2022-11-28#checking-the-status-of-your-rate-limit)
         // x-ratelimit-limit	    The maximum number of requests you're permitted to make per hour.
         // x-ratelimit-remaining	The number of requests remaining in the current rate limit window.
         // x-ratelimit-reset	    The time at which the current rate limit window resets in UTC epoch seconds.
@@ -64,7 +64,7 @@ pub(crate) static RATE_LIMIT_HEADERS: Lazy<Vec<RateLimitVariant>> = Lazy::new(||
             "x-ratelimit-reset".to_string(),
             ResetTimeKind::Timestamp,
         ),
-        // Twitter (https://developer.twitter.com/en/docs/twitter-api/rate-limits)
+        // Twitter (https://docs.x.com/x-api/fundamentals/rate-limits)
         // x-rate-limit-limit:      the rate limit ceiling for that given endpoint
         // x-rate-limit-remaining:  the number of requests left for the 15-minute window
         // x-rate-limit-reset:      the remaining window before the rate limit resets, in UTC epoch seconds
@@ -90,7 +90,7 @@ pub(crate) static RATE_LIMIT_HEADERS: Lazy<Vec<RateLimitVariant>> = Lazy::new(||
             "X-RateLimit-Reset".to_string(),
             ResetTimeKind::ImfFixdate,
         ),
-        // Gitlab (https://docs.gitlab.com/ee/user/admin_area/settings/user_and_ip_rate_limits.html#response-headers)
+        // Gitlab (https://docs.gitlab.com/administration/settings/user_and_ip_rate_limits/#headers-returned-for-all-requests)
         // RateLimit-Limit:     The request quota for the client each minute.
         // RateLimit-Observed   Number of requests associated to the client in the time window.
         // RateLimit-Remaining: Remaining quota in the time window. The result of RateLimit-Limit - RateLimit-Observed.

@@ -1,17 +1,14 @@
 //! Rate limit headers as defined in [RFC 6585](https://tools.ietf.org/html/rfc6585)
 //! and [draft-polli-ratelimit-headers-00][draft].
+
 mod types;
 mod variants;
 
 use std::str::FromStr;
 
-use crate::{
-    casesensitive_headermap::CaseSensitiveHeaderMap,
-    reset_time::{ResetTime, ResetTimeKind},
-};
+use crate::{casesensitive_headermap::CaseSensitiveHeaderMap, reset_time::ResetTime};
 
 use super::error::{Error, Result};
-use headers::HeaderValue;
 use variants::RATE_LIMIT_HEADERS;
 
 use time::Duration;
@@ -47,26 +44,33 @@ impl Headers {
     /// # Errors
     ///
     /// This function returns an error if the given header map does not contain
+    /// It returns an error if the headers do not contain
     /// all required headers or if the header values cannot be parsed.
     pub fn new<T: Into<CaseSensitiveHeaderMap>>(headers: T) -> std::result::Result<Self, Error> {
         let headers = headers.into();
-        let value = Self::get_remaining(&headers)?;
+
+        let variant = Self::find_variant(&headers)?;
+
+        let value = headers
+            .get(&variant.remaining_header)
+            .ok_or(Error::MissingRemaining)?;
         let remaining = Remaining::new(value.to_str()?)?;
 
-        let (limit, variant) = if let Ok((limit, variant)) = Self::get_rate_limit(&headers) {
-            (Limit::new(limit.to_str()?)?, variant)
-        } else if let Ok((used, variant)) = Self::get_used(&headers) {
-            // The site provides a `used` header, but no `limit` header.
-            // Therefore we have to calculate the limit from used and remaining.
-            let used = Used::new(used.to_str()?)?;
-            let limit = used.count + remaining.count;
-            (Limit::from(limit), variant)
+        let limit = if let Some(limit) = &variant.limit_header {
+            let value = headers.get(limit).ok_or(Error::MissingLimit)?;
+            Limit::new(value.to_str()?)?
+        } else if let Some(used) = &variant.used_header {
+            let value = headers.get(used).ok_or(Error::MissingUsed)?;
+            let used = Used::new(value.to_str()?)?;
+            Limit::from(used.count + remaining.count)
         } else {
-            return Err(Error::MissingUsed);
+            return Err(Error::MissingLimit);
         };
 
-        let (value, kind) = Self::get_reset(&headers)?;
-        let reset = ResetTime::new(value, kind)?;
+        let value = headers
+            .get(&variant.reset_header)
+            .ok_or(Error::MissingReset)?;
+        let reset = ResetTime::new(value, variant.reset_kind)?;
 
         Ok(Headers {
             limit: limit.count,
@@ -77,62 +81,35 @@ impl Headers {
         })
     }
 
-    /// Get the number of requests allowed in the time window
-    /// from the given header map
-    fn get_rate_limit(
-        header_map: &CaseSensitiveHeaderMap,
-    ) -> Result<(&HeaderValue, RateLimitVariant)> {
-        let variants = &RATE_LIMIT_HEADERS;
+    fn find_variant(headers: &CaseSensitiveHeaderMap) -> Result<RateLimitVariant> {
+        for variant in RATE_LIMIT_HEADERS.iter() {
+            // Remaining and Reset headers are mandatory for all variants,
+            // so we simply check if the header key exists in the input map.
+            let has_remaining = headers.get(&variant.remaining_header).is_some();
+            let has_reset = headers.get(&variant.reset_header).is_some();
 
-        for variant in variants.iter() {
-            if let Some(limit) = &variant.limit_header {
-                if let Some(value) = header_map.get(limit) {
-                    return Ok((value, variant.clone()));
-                }
+            // Limit and Used headers are optional in the Variant definition (Option<String>).
+            // We use `is_some_and` to check:
+            // 1. Does this variant define a limit/used header?
+            // 2. If so, is that header present in the input map?
+            let has_limit = variant
+                .limit_header
+                .as_ref()
+                .is_some_and(|h| headers.get(h).is_some());
+            let has_used = variant
+                .used_header
+                .as_ref()
+                .is_some_and(|h| headers.get(h).is_some());
+
+            // A match is found if:
+            // - The remaining header is present
+            // - The reset header is present
+            // - AND at least one of limit or used headers is present (as defined by the variant)
+            if has_remaining && has_reset && (has_limit || has_used) {
+                return Ok(variant.clone());
             }
         }
-        Err(Error::MissingLimit)
-    }
-
-    /// Get the number of requests used in the time window
-    /// from the given header map
-    fn get_used(header_map: &CaseSensitiveHeaderMap) -> Result<(&HeaderValue, RateLimitVariant)> {
-        let variants = &RATE_LIMIT_HEADERS;
-
-        for variant in variants.iter() {
-            if let Some(used) = &variant.used_header {
-                if let Some(value) = header_map.get(used) {
-                    return Ok((value, variant.clone()));
-                }
-            }
-        }
-        Err(Error::MissingUsed)
-    }
-
-    /// Get the number of requests remaining in the time window
-    /// from the given header map
-    fn get_remaining(header_map: &CaseSensitiveHeaderMap) -> Result<&HeaderValue> {
-        let variants = &RATE_LIMIT_HEADERS;
-
-        for variant in variants.iter() {
-            if let Some(value) = header_map.get(&variant.remaining_header) {
-                return Ok(value);
-            }
-        }
-        Err(Error::MissingRemaining)
-    }
-
-    /// Get the time at which the rate limit will be reset
-    /// from the given header map
-    fn get_reset(header_map: &CaseSensitiveHeaderMap) -> Result<(&HeaderValue, ResetTimeKind)> {
-        let variants = &RATE_LIMIT_HEADERS;
-
-        for variant in variants.iter() {
-            if let Some(value) = header_map.get(&variant.reset_header) {
-                return Ok((value, variant.reset_kind));
-            }
-        }
-        Err(Error::MissingReset)
+        Err(Error::NoMatchingVariant)
     }
 
     /// Get the number of requests allowed in the time window
@@ -166,7 +143,8 @@ impl FromStr for Headers {
 mod tests {
     use super::*;
     use crate::casesensitive_headermap::HeaderMapExt;
-    use headers::HeaderMap;
+    use crate::reset_time::ResetTimeKind;
+    use headers::{HeaderMap, HeaderValue};
     use indoc::indoc;
     use time::{macros::datetime, OffsetDateTime};
 
@@ -185,12 +163,18 @@ mod tests {
 
     #[test]
     fn parse_vendor() {
-        let map = CaseSensitiveHeaderMap::from_str("x-ratelimit-limit: 5000").unwrap();
-        let (_, variant) = Headers::get_rate_limit(&map).unwrap();
+        let map = CaseSensitiveHeaderMap::from_str(
+            "x-ratelimit-limit: 5000\nx-ratelimit-remaining: 5\nx-ratelimit-reset: 1350085394",
+        )
+        .unwrap();
+        let variant = Headers::find_variant(&map).unwrap();
         assert_eq!(variant.vendor, Vendor::Github);
 
-        let map = CaseSensitiveHeaderMap::from_str("RateLimit-Limit: 5000").unwrap();
-        let (_, variant) = Headers::get_rate_limit(&map).unwrap();
+        let map = CaseSensitiveHeaderMap::from_str(
+            "RateLimit-Limit: 5000\nRatelimit-Remaining: 5\nRatelimit-Reset: 10",
+        )
+        .unwrap();
+        let variant = Headers::find_variant(&map).unwrap();
         assert_eq!(variant.vendor, Vendor::Standard);
     }
 

@@ -34,18 +34,15 @@ pub struct Headers {
 }
 
 impl Headers {
-    /// Extracts rate limits from `Rate-Limit-...` HTTP headers separated by
-    /// newlines. These rate limits are commonly used by APIs.
+    /// Extracts rate limits from HTTP headers.
     ///
-    /// There are different header names for various websites
-    /// Github, Vimeo, Twitter, Imgur, etc have their own headers.
-    /// Without additional context, the parsing is done on a best-effort basis.
+    /// Different vendors (e.g. GitHub, Vimeo, Twitter) use different header names.
+    /// This function attempts to identify the vendor based on the presence of known headers.
     ///
     /// # Errors
     ///
-    /// This function returns an error if the given header map does not contain
-    /// It returns an error if the headers do not contain
-    /// all required headers or if the header values cannot be parsed.
+    /// Returns an error if the headers do not contain a known rate limit format,
+    /// or if the header values cannot be parsed.
     pub fn new<T: Into<CaseSensitiveHeaderMap>>(headers: T) -> std::result::Result<Self, Error> {
         let headers = headers.into();
 

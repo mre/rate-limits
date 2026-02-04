@@ -36,13 +36,19 @@ pub struct Headers {
 impl Headers {
     /// Extracts rate limits from HTTP headers.
     ///
-    /// Different vendors (e.g. GitHub, Vimeo, Twitter) use different header names.
-    /// This function attempts to identify the vendor based on the presence of known headers.
+    /// Different vendors (e.g. GitHub, Vimeo, Twitter) use different header
+    /// names. This function attempts to identify the vendor based on the
+    /// presence of known headers.
+    ///
+    /// There are many websites abusing or reusing rate limit headers with their
+    /// own definition of what the values mean. This library tries to be
+    /// pessimistic and only attempts to parse the rate limit headers if it
+    /// trusts the website to follow one of the supported variants.
     ///
     /// # Errors
     ///
-    /// Returns an error if the headers do not contain a known rate limit format,
-    /// or if the header values cannot be parsed.
+    /// Returns an error if the headers do not contain a known rate limit
+    /// format, or if the header values cannot be parsed.
     pub fn new<T: Into<CaseSensitiveHeaderMap>>(headers: T) -> std::result::Result<Self, Error> {
         let headers = headers.into();
 
@@ -309,5 +315,45 @@ x-ratelimit-reset: 1350085394
             rate.reset(),
             ResetTime::DateTime(OffsetDateTime::from_unix_timestamp(1_609_844_400).unwrap())
         );
+    }
+
+    #[test]
+    fn parse_unknown_headers() {
+        let headers = indoc! {"
+            X-Unknown-Limit: 5000
+            X-Unknown-Remaining: 4987
+            X-Unknown-Reset: 1350085394
+        "};
+
+        assert!(Headers::from_str(headers).is_err());
+    }
+
+    #[test]
+    fn parse_garbage_headers() {
+        let headers = indoc! {"
+            RateLimit-Limit: foo
+            Ratelimit-Remaining: bar
+            Ratelimit-Reset: baz
+        "};
+
+        // It finds the variant (PolliDraft) but fails to parse values
+        assert!(Headers::from_str(headers).is_err());
+    }
+
+    #[test]
+    fn parse_case_sensitive_check() {
+        // These headers look like the Polli draft, but the casing is wrong.
+        // Polli draft uses `Ratelimit-Remaining`, not `RATELIMIT-REMAINING`.
+        //
+        // To properly test this without interfering with Gitlab support (which
+        // uses RateLimit-Remaining), we use ALL CAPS which shouldn't match any
+        // known vendor.
+        let headers = indoc! {"
+            RateLimit-Limit: 5000
+            RATELIMIT-REMAINING: 5
+            RATELIMIT-RESET: 10
+        "};
+
+        assert!(Headers::from_str(headers).is_err());
     }
 }

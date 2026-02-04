@@ -45,6 +45,10 @@ impl Headers {
     /// pessimistic and only attempts to parse the rate limit headers if it
     /// trusts the website to follow one of the supported variants.
     ///
+    /// Some vendors might use the same header names but different value
+    /// formats. In this case, the library will try to parse the headers using
+    /// the different variants until one succeeds.
+    ///
     /// # Errors
     ///
     /// Returns an error if the headers do not contain a known rate limit
@@ -52,8 +56,25 @@ impl Headers {
     pub fn new<T: Into<CaseSensitiveHeaderMap>>(headers: T) -> std::result::Result<Self, Error> {
         let headers = headers.into();
 
-        let variant = Self::find_variant(&headers)?;
+        let variants = Self::find_variants(&headers);
 
+        if variants.is_empty() {
+            return Err(Error::NoMatchingVariant);
+        }
+
+        let mut last_error = Error::NoMatchingVariant;
+
+        for variant in variants {
+            match Self::try_parse(&headers, &variant) {
+                Ok(headers) => return Ok(headers),
+                Err(e) => last_error = e,
+            }
+        }
+
+        Err(last_error)
+    }
+
+    fn try_parse(headers: &CaseSensitiveHeaderMap, variant: &RateLimitVariant) -> Result<Self> {
         let value = headers
             .get(&variant.remaining_header)
             .ok_or(Error::MissingRemaining)?;
@@ -84,7 +105,9 @@ impl Headers {
         })
     }
 
-    fn find_variant(headers: &CaseSensitiveHeaderMap) -> Result<RateLimitVariant> {
+    fn find_variants(headers: &CaseSensitiveHeaderMap) -> Vec<RateLimitVariant> {
+        let mut variants = Vec::new();
+
         for variant in RATE_LIMIT_HEADERS.iter() {
             // Remaining and Reset headers are mandatory for all variants,
             // so we simply check if the header key exists in the input map.
@@ -109,10 +132,10 @@ impl Headers {
             // - The reset header is present
             // - AND at least one of limit or used headers is present (as defined by the variant)
             if has_remaining && has_reset && (has_limit || has_used) {
-                return Ok(variant.clone());
+                variants.push(variant.clone());
             }
         }
-        Err(Error::NoMatchingVariant)
+        variants
     }
 
     /// Get the number of requests allowed in the time window
@@ -170,15 +193,15 @@ mod tests {
             "x-ratelimit-limit: 5000\nx-ratelimit-remaining: 5\nx-ratelimit-reset: 1350085394",
         )
         .unwrap();
-        let variant = Headers::find_variant(&map).unwrap();
-        assert_eq!(variant.vendor, Vendor::Github);
+        let variants = Headers::find_variants(&map);
+        assert_eq!(variants[0].vendor, Vendor::Github);
 
         let map = CaseSensitiveHeaderMap::from_str(
             "RateLimit-Limit: 5000\nRatelimit-Remaining: 5\nRatelimit-Reset: 10",
         )
         .unwrap();
-        let variant = Headers::find_variant(&map).unwrap();
-        assert_eq!(variant.vendor, Vendor::PolliDraft);
+        let variants = Headers::find_variants(&map);
+        assert_eq!(variants[0].vendor, Vendor::PolliDraft);
     }
 
     #[test]
@@ -331,6 +354,24 @@ x-ratelimit-reset: 1350085394
         assert_eq!(
             rate.reset(),
             ResetTime::DateTime(OffsetDateTime::from_unix_timestamp(1_392_815_263).unwrap())
+        );
+    }
+
+    #[test]
+    fn parse_vimeo_headers() {
+        let headers = indoc! {"
+            X-RateLimit-Limit: 500
+            X-RateLimit-Remaining: 499
+            X-RateLimit-Reset: Thu, 14 Sep 2023 21:00:00 GMT
+        "};
+
+        let rate = Headers::from_str(headers).unwrap();
+        assert_eq!(rate.limit(), 500);
+        assert_eq!(rate.remaining(), 499);
+        assert_eq!(rate.vendor, Vendor::Vimeo);
+        assert_eq!(
+            rate.reset(),
+            ResetTime::DateTime(datetime!(2023-09-14 21:00:00 UTC))
         );
     }
 

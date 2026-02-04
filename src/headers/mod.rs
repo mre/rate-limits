@@ -318,6 +318,23 @@ x-ratelimit-reset: 1350085394
     }
 
     #[test]
+    fn parse_twilio_headers() {
+        let headers = indoc! {"
+            X-RateLimit-Limit: 500
+            X-RateLimit-Remaining: 499
+            X-RateLimit-Reset: 1392815263
+        "};
+
+        let rate = Headers::from_str(headers).unwrap();
+        assert_eq!(rate.limit(), 500);
+        assert_eq!(rate.remaining(), 499);
+        assert_eq!(
+            rate.reset(),
+            ResetTime::DateTime(OffsetDateTime::from_unix_timestamp(1_392_815_263).unwrap())
+        );
+    }
+
+    #[test]
     fn parse_unknown_headers() {
         let headers = indoc! {"
             X-Unknown-Limit: 5000

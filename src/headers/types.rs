@@ -21,6 +21,8 @@ pub enum Vendor {
     Linear,
     /// Reddit rate limit headers
     Reddit,
+    /// Twilio rate limit headers
+    Twilio,
     /// Twitter API rate limit headers
     Twitter,
     /// Vimeo rate limit headers

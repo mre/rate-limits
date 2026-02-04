@@ -38,6 +38,19 @@ pub(crate) static RATE_LIMIT_HEADERS: Lazy<Vec<RateLimitVariant>> = Lazy::new(||
             "X-Ratelimit-Reset".to_string(),
             ResetTimeKind::Seconds,
         ),
+        // Twilio (https://www.twilio.com/docs/usage/api/rate-limits)
+        // X-RateLimit-Limit:       The max number of requests you are allowed to make
+        // X-RateLimit-Remaining:   The number of requests you have left
+        // X-RateLimit-Reset:       The timestamp when the rate limit resets in UTC epoch seconds
+        RateLimitVariant::new(
+            Vendor::Twilio,
+            None,
+            Some("X-RateLimit-Limit".to_string()),
+            None,
+            "X-RateLimit-Remaining".to_string(),
+            "X-RateLimit-Reset".to_string(),
+            ResetTimeKind::Timestamp,
+        ),
         // Linear (https://linear.app/developers/rate-limiting#api-request-limits)
         // X-RateLimit-Requests-Limit       The maximum number of API requests you're permitted to make per hour.
         // X-RateLimit-Requests-Remaining   The number of API requests remaining in the current rate limit window.

@@ -2,22 +2,19 @@
 //! and [draft-polli-ratelimit-headers-00][draft].
 
 mod types;
-mod variants;
 
 use std::str::FromStr;
 
-use crate::{casesensitive_headermap::CaseSensitiveHeaderMap, reset_time::ResetTime};
+use crate::{parser::Parser, reset_time::ResetTime};
+use http::HeaderMap;
 
 use super::error::{Error, Result};
-use variants::RATE_LIMIT_HEADERS;
 
 use time::Duration;
-use types::Used;
 pub use types::Vendor;
-pub(crate) use types::{Limit, RateLimitVariant, Remaining};
 
 /// HTTP rate limits as parsed from header values
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Headers {
     /// The maximum number of requests allowed in the time window
     pub limit: usize,
@@ -31,6 +28,8 @@ pub struct Headers {
     pub window: Option<Duration>,
     /// Predicted vendor based on rate limit header
     pub vendor: Vendor,
+    /// All candidates that matched the headers
+    pub candidates: Vec<Vendor>,
 }
 
 impl Headers {
@@ -53,89 +52,22 @@ impl Headers {
     ///
     /// Returns an error if the headers do not contain a known rate limit
     /// format, or if the header values cannot be parsed.
-    pub fn new<T: Into<CaseSensitiveHeaderMap>>(headers: T) -> std::result::Result<Self, Error> {
-        let headers = headers.into();
+    pub fn new(headers: &HeaderMap) -> std::result::Result<Self, Error> {
+        let parser = Parser::new(headers);
+        let results = parser.parse()?;
 
-        let variants = Self::find_variants(&headers);
-
-        if variants.is_empty() {
-            return Err(Error::NoMatchingVariant);
-        }
-
-        let mut last_error = Error::NoMatchingVariant;
-
-        for variant in variants {
-            match Self::try_parse(&headers, &variant) {
-                Ok(headers) => return Ok(headers),
-                Err(e) => last_error = e,
-            }
-        }
-
-        Err(last_error)
-    }
-
-    fn try_parse(headers: &CaseSensitiveHeaderMap, variant: &RateLimitVariant) -> Result<Self> {
-        let value = headers
-            .get(&variant.remaining_header)
-            .ok_or(Error::MissingRemaining)?;
-        let remaining = Remaining::new(value.to_str()?)?;
-
-        let limit = if let Some(limit) = &variant.limit_header {
-            let value = headers.get(limit).ok_or(Error::MissingLimit)?;
-            Limit::new(value.to_str()?)?
-        } else if let Some(used) = &variant.used_header {
-            let value = headers.get(used).ok_or(Error::MissingUsed)?;
-            let used = Used::new(value.to_str()?)?;
-            Limit::from(used.count.saturating_add(remaining.count))
-        } else {
-            return Err(Error::MissingLimit);
-        };
-
-        let value = headers
-            .get(&variant.reset_header)
-            .ok_or(Error::MissingReset)?;
-        let reset = ResetTime::new(value, variant.reset_kind)?;
+        // We sort by specificity in the parser, so the first one is the best match.
+        let (vendor, limit, remaining, reset, window) = results[0];
+        let candidates = results.iter().map(|(v, _, _, _, _)| *v).collect();
 
         Ok(Headers {
-            limit: limit.count,
-            remaining: remaining.count,
+            limit,
+            remaining,
             reset,
-            window: variant.duration,
-            vendor: variant.vendor,
+            window,
+            vendor,
+            candidates,
         })
-    }
-
-    fn find_variants(headers: &CaseSensitiveHeaderMap) -> Vec<RateLimitVariant> {
-        let mut variants = Vec::new();
-
-        for variant in RATE_LIMIT_HEADERS.iter() {
-            // Remaining and Reset headers are mandatory for all variants,
-            // so we simply check if the header key exists in the input map.
-            let has_remaining = headers.get(&variant.remaining_header).is_some();
-            let has_reset = headers.get(&variant.reset_header).is_some();
-
-            // Limit and Used headers are optional in the Variant definition (Option<String>).
-            // We use `is_some_and` to check:
-            // 1. Does this variant define a limit/used header?
-            // 2. If so, is that header present in the input map?
-            let has_limit = variant
-                .limit_header
-                .as_ref()
-                .is_some_and(|h| headers.get(h).is_some());
-            let has_used = variant
-                .used_header
-                .as_ref()
-                .is_some_and(|h| headers.get(h).is_some());
-
-            // A match is found if:
-            // - The remaining header is present
-            // - The reset header is present
-            // - AND at least one of limit or used headers is present (as defined by the variant)
-            if has_remaining && has_reset && (has_limit || has_used) {
-                variants.push(variant.clone());
-            }
-        }
-        variants
     }
 
     /// Get the number of requests allowed in the time window
@@ -161,60 +93,41 @@ impl FromStr for Headers {
     type Err = Error;
 
     fn from_str(map: &str) -> Result<Self> {
-        Headers::new(CaseSensitiveHeaderMap::from_str(map)?)
+        let mut headers = HeaderMap::new();
+        for line in map.lines() {
+            if let Some((k, v)) = line.split_once(':') {
+                if let (Ok(k), Ok(v)) = (
+                    http::header::HeaderName::from_str(k.trim()),
+                    http::header::HeaderValue::from_str(v.trim()),
+                ) {
+                    headers.insert(k, v);
+                }
+            }
+        }
+        Headers::new(&headers)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::casesensitive_headermap::HeaderMapExt;
     use crate::reset_time::ResetTimeKind;
-    use headers::{HeaderMap, HeaderValue};
+    use http::header::HeaderValue;
     use indoc::indoc;
     use time::{OffsetDateTime, macros::datetime};
 
     #[test]
-    fn parse_limit_value() {
-        let limit = Limit::new("  23 ").unwrap();
-        assert_eq!(limit.count, 23);
-    }
-
-    #[test]
-    fn parse_invalid_limit_value() {
-        assert!(Limit::new("foo").is_err());
-        assert!(Limit::new("0 foo").is_err());
-        assert!(Limit::new("bar 0").is_err());
-    }
-
-    #[test]
     fn parse_vendor() {
-        let map = CaseSensitiveHeaderMap::from_str(
+        let map = Headers::from_str(
             "x-ratelimit-limit: 5000\nx-ratelimit-remaining: 5\nx-ratelimit-reset: 1350085394",
         )
         .unwrap();
-        let variants = Headers::find_variants(&map);
-        assert_eq!(variants[0].vendor, Vendor::Github);
+        assert_eq!(map.vendor, Vendor::Github);
 
-        let map = CaseSensitiveHeaderMap::from_str(
-            "RateLimit-Limit: 5000\nRatelimit-Remaining: 5\nRatelimit-Reset: 10",
-        )
-        .unwrap();
-        let variants = Headers::find_variants(&map);
-        assert_eq!(variants[0].vendor, Vendor::PolliDraft);
-    }
-
-    #[test]
-    fn parse_remaining_value() {
-        let remaining = Remaining::new("  23 ").unwrap();
-        assert_eq!(remaining.count, 23);
-    }
-
-    #[test]
-    fn parse_invalid_remaining_value() {
-        assert!(Remaining::new("foo").is_err());
-        assert!(Remaining::new("0 foo").is_err());
-        assert!(Remaining::new("bar 0").is_err());
+        let map =
+            Headers::from_str("RateLimit-Limit: 5000\nRatelimit-Remaining: 5\nRatelimit-Reset: 10")
+                .unwrap();
+        assert_eq!(map.vendor, Vendor::PolliDraft);
     }
 
     #[test]
@@ -242,31 +155,6 @@ mod tests {
         assert_eq!(
             d.unwrap(),
             ResetTime::DateTime(datetime!(1994-11-15 8:12:31 UTC))
-        );
-    }
-
-    #[test]
-    fn parse_header_map_newlines() {
-        let map = HeaderMap::from_raw(
-            "x-ratelimit-limit: 5000
-x-ratelimit-remaining: 4987
-x-ratelimit-reset: 1350085394
-",
-        )
-        .unwrap();
-
-        assert_eq!(map.len(), 3);
-        assert_eq!(
-            map.get("x-ratelimit-limit"),
-            Some(&HeaderValue::from_str("5000").unwrap())
-        );
-        assert_eq!(
-            map.get("x-ratelimit-remaining"),
-            Some(&HeaderValue::from_str("4987").unwrap())
-        );
-        assert_eq!(
-            map.get("x-ratelimit-reset"),
-            Some(&HeaderValue::from_str("1350085394").unwrap())
         );
     }
 
@@ -419,23 +307,6 @@ x-ratelimit-reset: 1350085394
         "};
 
         // It finds the variant (PolliDraft) but fails to parse values
-        assert!(Headers::from_str(headers).is_err());
-    }
-
-    #[test]
-    fn parse_case_sensitive_check() {
-        // These headers look like the Polli draft, but the casing is wrong.
-        // Polli draft uses `Ratelimit-Remaining`, not `RATELIMIT-REMAINING`.
-        //
-        // To properly test this without interfering with Gitlab support (which
-        // uses RateLimit-Remaining), we use ALL CAPS which shouldn't match any
-        // known vendor.
-        let headers = indoc! {"
-            RateLimit-Limit: 5000
-            RATELIMIT-REMAINING: 5
-            RATELIMIT-RESET: 10
-        "};
-
         assert!(Headers::from_str(headers).is_err());
     }
 }

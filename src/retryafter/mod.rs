@@ -3,13 +3,10 @@
 //! See <https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Retry-After>
 use std::str::FromStr;
 
-use headers::HeaderValue;
+use http::HeaderMap;
 use time::{Date, format_description::well_known::Rfc2822};
 
-use crate::{
-    casesensitive_headermap::CaseSensitiveHeaderMap,
-    reset_time::{ResetTime, ResetTimeKind},
-};
+use crate::reset_time::{ResetTime, ResetTimeKind};
 
 use super::error::{Error, Result};
 
@@ -24,9 +21,8 @@ impl RateLimit {
     /// Rate limit implementation based on `Retry-After` header value
     ///
     /// See <https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Retry-After>
-    pub fn new<T: Into<CaseSensitiveHeaderMap>>(headers: T) -> std::result::Result<Self, Error> {
-        let headers = headers.into();
-        let reset = match Self::get_retry_after_header(&headers) {
+    pub fn new(headers: &HeaderMap) -> std::result::Result<Self, Error> {
+        let reset = match headers.get(http::header::RETRY_AFTER) {
             Some(retry_after) => {
                 if Date::parse(retry_after.to_str()?, &Rfc2822).is_ok() {
                     ResetTime::new(retry_after, ResetTimeKind::ImfFixdate)?
@@ -40,16 +36,6 @@ impl RateLimit {
         Ok(RateLimit { reset })
     }
 
-    /// Get the Retry-After header value
-    ///
-    /// This does not need to be case sensitive because the header name is
-    /// not ambiguous.
-    fn get_retry_after_header(header_map: &CaseSensitiveHeaderMap) -> Option<&HeaderValue> {
-        header_map
-            .get("Retry-After")
-            .or_else(|| header_map.get("retry-after"))
-    }
-
     /// Get the time at which the rate limit will be reset
     #[must_use]
     pub const fn reset(&self) -> ResetTime {
@@ -61,7 +47,18 @@ impl FromStr for RateLimit {
     type Err = Error;
 
     fn from_str(map: &str) -> Result<Self> {
-        RateLimit::new(CaseSensitiveHeaderMap::from_str(map)?)
+        let mut headers = HeaderMap::new();
+        for line in map.lines() {
+            if let Some((k, v)) = line.split_once(':') {
+                if let (Ok(k), Ok(v)) = (
+                    http::header::HeaderName::from_str(k.trim()),
+                    http::header::HeaderValue::from_str(v.trim()),
+                ) {
+                    headers.insert(k, v);
+                }
+            }
+        }
+        RateLimit::new(&headers)
     }
 }
 
@@ -71,14 +68,6 @@ mod tests {
     use super::*;
     use indoc::indoc;
     use time::macros::datetime;
-
-    #[test]
-    fn parse_retry_after_seconds() {
-        let map = CaseSensitiveHeaderMap::from_str("Retry-After: 30").unwrap();
-        let retry = RateLimit::get_retry_after_header(&map).unwrap();
-
-        assert_eq!("30", retry);
-    }
 
     #[test]
     fn retry_after_seconds() {

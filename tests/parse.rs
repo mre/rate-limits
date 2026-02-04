@@ -14,7 +14,7 @@ mod cli {
         headers.insert("X-RATELIMIT-RESET", "1350085394".parse().unwrap());
 
         assert_eq!(
-            RateLimit::new(headers).unwrap(),
+            RateLimit::new(&headers).unwrap(),
             RateLimit::Rfc6585(headers::Headers {
                 limit: 5000,
                 remaining: 4987,
@@ -22,7 +22,8 @@ mod cli {
                     OffsetDateTime::from_unix_timestamp(1350085394).unwrap()
                 ),
                 window: Some(Duration::HOUR),
-                vendor: Vendor::Github
+                vendor: Vendor::Github,
+                candidates: vec![Vendor::Github, Vendor::Twilio]
             }),
         );
     }

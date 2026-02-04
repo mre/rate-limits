@@ -15,9 +15,9 @@
 #![deny(missing_docs)]
 #![allow(clippy::module_name_repetitions)]
 
-mod casesensitive_headermap;
 mod convert;
 mod error;
+mod parser;
 mod reset_time;
 
 pub mod headers;
@@ -25,8 +25,8 @@ pub mod retryafter;
 
 use std::str::FromStr;
 
-use casesensitive_headermap::CaseSensitiveHeaderMap;
 use error::{Error, Result};
+use http::HeaderMap;
 
 pub use headers::{Headers, Vendor};
 pub use reset_time::ResetTime;
@@ -42,7 +42,7 @@ pub use reset_time::ResetTime;
 /// [ietf]: https://datatracker.ietf.org/doc/html/draft-polli-ratelimit-headers-00
 /// [retryafter]: https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Retry-After
 ///
-#[derive(Debug, Copy, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum RateLimit {
     /// Rate limit information as per the [IETF "Polly" draft][ietf].
     Rfc6585(headers::Headers),
@@ -52,9 +52,8 @@ pub enum RateLimit {
 
 impl RateLimit {
     /// Create a new `RateLimit` from a `http::HeaderMap`.
-    pub fn new<T: Into<CaseSensitiveHeaderMap>>(headers: T) -> std::result::Result<Self, Error> {
-        let headers = headers.into();
-        let rfc6585 = headers::Headers::new(headers.clone());
+    pub fn new(headers: &HeaderMap) -> std::result::Result<Self, Error> {
+        let rfc6585 = headers::Headers::new(headers);
         let retryafter = retryafter::RateLimit::new(headers);
 
         match (rfc6585, retryafter) {
@@ -105,7 +104,18 @@ impl FromStr for RateLimit {
     type Err = Error;
 
     fn from_str(map: &str) -> Result<Self> {
-        RateLimit::new(map)
+        let mut headers = HeaderMap::new();
+        for line in map.lines() {
+            if let Some((k, v)) = line.split_once(':') {
+                if let (Ok(k), Ok(v)) = (
+                    http::header::HeaderName::from_str(k.trim()),
+                    http::header::HeaderValue::from_str(v.trim()),
+                ) {
+                    headers.insert(k, v);
+                }
+            }
+        }
+        RateLimit::new(&headers)
     }
 }
 

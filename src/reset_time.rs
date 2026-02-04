@@ -11,11 +11,16 @@ use time::{Duration, OffsetDateTime, PrimitiveDateTime};
 ///
 /// This enum lists all known variants.
 #[derive(Copy, Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub enum ResetTimeKind {
     /// Number of seconds until rate limit is lifted
     Seconds,
-    /// Unix timestamp when rate limit will be lifted
+    /// Unix timestamp (UTC epoch seconds)
+    /// when rate limit will be lifted
     Timestamp,
+    /// Unix timestamp in millisecond resolution (UTC epoch milliseconds)
+    /// when rate limit will be lifted
+    TimestampMillis,
     /// RFC 2822 date when rate limit will be lifted
     ImfFixdate,
     /// ISO 8601 date when rate limit will be lifted
@@ -47,6 +52,10 @@ impl ResetTime {
             ResetTimeKind::Seconds => Ok(ResetTime::Seconds(convert::to_usize(value)?)),
             ResetTimeKind::Timestamp => Ok(Self::DateTime(
                 OffsetDateTime::from_unix_timestamp(convert::to_i64(value)?)
+                    .map_err(Error::Time)?,
+            )),
+            ResetTimeKind::TimestampMillis => Ok(Self::DateTime(
+                OffsetDateTime::from_unix_timestamp_nanos(convert::to_i128(value)? * 1_000_000)
                     .map_err(Error::Time)?,
             )),
             ResetTimeKind::Iso8601 => {

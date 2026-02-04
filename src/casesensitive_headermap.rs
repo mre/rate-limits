@@ -2,7 +2,9 @@ use std::collections::HashMap;
 use std::str::FromStr;
 
 use crate::error::{Error, Result};
-use headers::{HeaderMap, HeaderName, HeaderValue};
+#[cfg(test)]
+use headers::HeaderName;
+use headers::{HeaderMap, HeaderValue};
 
 const HEADER_SEPARATOR: &str = ":";
 
@@ -89,11 +91,13 @@ impl From<&HeaderMap> for CaseSensitiveHeaderMap {
 }
 
 /// Extension trait for `HeaderMap` to convert from raw string.
+#[cfg(test)]
 pub(crate) trait HeaderMapExt {
     /// Convert from raw string.
     fn from_raw(raw: &str) -> Result<HeaderMap>;
 }
 
+#[cfg(test)]
 impl HeaderMapExt for HeaderMap {
     fn from_raw(raw: &str) -> Result<HeaderMap> {
         let mut headers = HeaderMap::new();

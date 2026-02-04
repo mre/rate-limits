@@ -38,6 +38,19 @@ pub(crate) static RATE_LIMIT_HEADERS: Lazy<Vec<RateLimitVariant>> = Lazy::new(||
             "X-Ratelimit-Reset".to_string(),
             ResetTimeKind::Seconds,
         ),
+        // Linear (https://developers.linear.app/docs/graphql/working-with-the-graphql-api/rate-limiting)
+        // X-RateLimit-Requests-Limit       The maximum number of API requests you're permitted to make per hour.
+        // X-RateLimit-Requests-Remaining   The number of API requests remaining in the current rate limit window.
+        // X-RateLimit-Requests-Reset       The time at which the current rate limit window resets in UTC epoch milliseconds.
+        RateLimitVariant::new(
+            Vendor::Linear,
+            Some(Duration::hours(1)),
+            Some("x-ratelimit-requests-limit".to_string()),
+            None,
+            "x-ratelimit-requests-remaining".to_string(),
+            "x-ratelimit-requests-reset".to_string(),
+            ResetTimeKind::TimestampMillis,
+        ),
         // Github (https://docs.github.com/en/rest/overview/resources-in-the-rest-api#rate-limit-http-headers)
         // x-ratelimit-limit	    The maximum number of requests you're permitted to make per hour.
         // x-ratelimit-remaining	The number of requests remaining in the current rate limit window.

@@ -11,18 +11,20 @@ use time::Duration;
 pub enum Vendor {
     /// Rate limit headers as defined in the `polli-ratelimit-headers-00` draft
     Standard,
-    /// Reddit rate limit headers
-    Reddit,
+    /// Akamai rate limit headers
+    Akamai,
     /// Github API rate limit headers
     Github,
+    /// Gitlab rate limit headers
+    Gitlab,
+    /// Linear rate limit headers (GraphQL)
+    Linear,
+    /// Reddit rate limit headers
+    Reddit,
     /// Twitter API rate limit headers
     Twitter,
     /// Vimeo rate limit headers
     Vimeo,
-    /// Gitlab rate limit headers
-    Gitlab,
-    /// Akamai rate limit headers
-    Akamai,
 }
 
 /// A variant defines all relevant fields for parsing headers from a given vendor

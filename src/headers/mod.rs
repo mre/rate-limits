@@ -292,6 +292,27 @@ x-ratelimit-reset: 1350085394
     }
 
     #[test]
+    fn parse_linear_headers() {
+        let headers = indoc! {"
+            x-ratelimit-requests-limit: 1500
+            x-ratelimit-requests-remaining: 1499
+            x-ratelimit-requests-reset: 1694721826678
+        "};
+
+        let rate = Headers::from_str(headers).unwrap();
+        assert_eq!(rate.limit(), 1500);
+        assert_eq!(rate.remaining(), 1499);
+        assert_eq!(
+            rate.reset(),
+            ResetTime::DateTime(
+                // We really only have millisecond resolution, but OffsetDateTime
+                // only provides nanosecond resolution.
+                OffsetDateTime::from_unix_timestamp_nanos(1_694_721_826_678_000_000).unwrap()
+            )
+        );
+    }
+
+    #[test]
     fn parse_gitlab_headers() {
         let headers = indoc! {"
             RateLimit-Limit: 60

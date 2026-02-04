@@ -19,6 +19,8 @@ pub enum Vendor {
     Gitlab,
     /// Linear rate limit headers (GraphQL)
     Linear,
+    /// OpenAI rate limit headers
+    OpenAI,
     /// Reddit rate limit headers
     Reddit,
     /// Twilio rate limit headers

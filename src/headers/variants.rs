@@ -38,7 +38,7 @@ pub(crate) static RATE_LIMIT_HEADERS: Lazy<Vec<RateLimitVariant>> = Lazy::new(||
             "X-Ratelimit-Reset".to_string(),
             ResetTimeKind::Seconds,
         ),
-        // Twilio (https://www.twilio.com/docs/usage/api/rate-limits)
+        // Twilio (https://www.twilio.com/docs/sendgrid/api-reference/how-to-use-the-sendgrid-v3-api/rate-limits)
         // X-RateLimit-Limit:       The max number of requests you are allowed to make
         // X-RateLimit-Remaining:   The number of requests you have left
         // X-RateLimit-Reset:       The timestamp when the rate limit resets in UTC epoch seconds
@@ -129,6 +129,19 @@ pub(crate) static RATE_LIMIT_HEADERS: Lazy<Vec<RateLimitVariant>> = Lazy::new(||
             "X-RateLimit-Remaining".to_string(),
             "X-RateLimit-Next".to_string(),
             ResetTimeKind::Iso8601,
+        ),
+        // OpenAI (https://platform.openai.com/docs/guides/rate-limits)
+        // x-ratelimit-limit-requests:     The maximum number of requests that are permitted before exhausting the rate limit.
+        // x-ratelimit-remaining-requests: The remaining number of requests that are permitted before exhausting the rate limit.
+        // x-ratelimit-reset-requests:     The time until the rate limit (based on requests) resets to its initial state.
+        RateLimitVariant::new(
+            Vendor::OpenAI,
+            None,
+            Some("x-ratelimit-limit-requests".to_string()),
+            None,
+            "x-ratelimit-remaining-requests".to_string(),
+            "x-ratelimit-reset-requests".to_string(),
+            ResetTimeKind::OpenAIDuration,
         ),
     ]
 });

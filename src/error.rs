@@ -50,6 +50,9 @@ pub enum Error {
 
     /// Error parsing reset time: {0}
     Time(#[from] time::error::ComponentRange),
+
+    /// Invalid duration: {0}
+    InvalidDuration(String),
 }
 
 pub(crate) type Result<T> = std::result::Result<T, Error>;

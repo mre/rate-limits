@@ -376,6 +376,30 @@ x-ratelimit-reset: 1350085394
     }
 
     #[test]
+    fn parse_openai_headers() {
+        let headers = indoc! {"
+            x-ratelimit-limit-requests: 60
+            x-ratelimit-remaining-requests: 59
+            x-ratelimit-reset-requests: 1s
+        "};
+
+        let rate = Headers::from_str(headers).unwrap();
+        assert_eq!(rate.limit(), 60);
+        assert_eq!(rate.remaining(), 59);
+        assert_eq!(rate.vendor, Vendor::OpenAI);
+        assert_eq!(rate.reset(), ResetTime::Seconds(1));
+
+        let headers = indoc! {"
+            x-ratelimit-limit-requests: 60
+            x-ratelimit-remaining-requests: 59
+            x-ratelimit-reset-requests: 6m0s
+        "};
+
+        let rate = Headers::from_str(headers).unwrap();
+        assert_eq!(rate.reset(), ResetTime::Seconds(360));
+    }
+
+    #[test]
     fn parse_unknown_headers() {
         let headers = indoc! {"
             X-Unknown-Limit: 5000

@@ -82,11 +82,7 @@ impl ResetTime {
             ResetTime::DateTime(d) => {
                 let diff = *d - OffsetDateTime::now_utc();
                 let seconds = diff.whole_seconds();
-                if seconds < 0 {
-                    0
-                } else {
-                    seconds as usize
-                }
+                if seconds < 0 { 0 } else { seconds as usize }
             }
         }
     }

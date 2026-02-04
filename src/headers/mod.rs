@@ -143,7 +143,7 @@ mod tests {
     use crate::reset_time::ResetTimeKind;
     use headers::{HeaderMap, HeaderValue};
     use indoc::indoc;
-    use time::{macros::datetime, OffsetDateTime};
+    use time::{OffsetDateTime, macros::datetime};
 
     #[test]
     fn parse_limit_value() {

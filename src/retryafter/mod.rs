@@ -4,7 +4,7 @@
 use std::str::FromStr;
 
 use headers::HeaderValue;
-use time::{format_description::well_known::Rfc2822, Date};
+use time::{Date, format_description::well_known::Rfc2822};
 
 use crate::{
     casesensitive_headermap::CaseSensitiveHeaderMap,

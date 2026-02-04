@@ -278,9 +278,9 @@ x-ratelimit-reset: 1350085394
     #[test]
     fn parse_linear_headers() {
         let headers = indoc! {"
-            x-ratelimit-requests-limit: 1500
-            x-ratelimit-requests-remaining: 1499
-            x-ratelimit-requests-reset: 1694721826678
+            X-RateLimit-Requests-Limit: 1500
+            X-RateLimit-Requests-Remaining: 1499
+            X-RateLimit-Requests-Reset: 1694721826678
         "};
 
         let rate = Headers::from_str(headers).unwrap();

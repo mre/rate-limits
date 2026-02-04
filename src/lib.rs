@@ -40,7 +40,7 @@ pub use reset_time::ResetTime;
 /// - [Retry-After][retryafter]
 ///
 /// [ietf]: https://datatracker.ietf.org/doc/html/draft-polli-ratelimit-headers-00
-/// [retryafter]: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Retry-After
+/// [retryafter]: https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Retry-After
 ///
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum RateLimit {

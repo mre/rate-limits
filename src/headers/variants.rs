@@ -45,10 +45,10 @@ pub(crate) static RATE_LIMIT_HEADERS: Lazy<Vec<RateLimitVariant>> = Lazy::new(||
         RateLimitVariant::new(
             Vendor::Linear,
             Some(Duration::hours(1)),
-            Some("x-ratelimit-requests-limit".to_string()),
+            Some("X-RateLimit-Requests-Limit".to_string()),
             None,
-            "x-ratelimit-requests-remaining".to_string(),
-            "x-ratelimit-requests-reset".to_string(),
+            "X-RateLimit-Requests-Remaining".to_string(),
+            "X-RateLimit-Requests-Reset".to_string(),
             ResetTimeKind::TimestampMillis,
         ),
         // Github (https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api?apiVersion=2022-11-28#checking-the-status-of-your-rate-limit)

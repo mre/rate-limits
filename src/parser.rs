@@ -100,9 +100,9 @@ where
         parsed_results.sort_by_key(|&(score, _)| std::cmp::Reverse(score));
 
         let len = parsed_results.len();
-        let (_, (vendor, limit, remaining, reset, window)) =
-            parsed_results.into_iter().next().unwrap();
-        if len >= 1 {
+        if let Some((_, (vendor, limit, remaining, reset, window))) =
+            parsed_results.into_iter().next()
+        {
             let vendor = if len == 1 { vendor } else { Vendor::Unknown };
             return Ok(Headers {
                 limit,

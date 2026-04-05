@@ -1,20 +1,18 @@
 //! Rate limit headers as defined in [RFC 6585](https://tools.ietf.org/html/rfc6585)
 //! and [draft-polli-ratelimit-headers-00][draft].
 
-mod types;
-
 use std::str::FromStr;
 
-use crate::{parser::Parser, reset_time::ResetTime};
-use http::HeaderMap;
-
-use super::error::{Error, Result};
-
+use crate::{
+    error::{Error, Result},
+    parser::Parser,
+    reset_time::ResetTime,
+    vendors::{Vendor, VendorMask},
+};
 use time::Duration;
-pub use types::Vendor;
 
 /// HTTP rate limits as parsed from header values
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Headers {
     /// The maximum number of requests allowed in the time window
     pub limit: usize,
@@ -23,17 +21,17 @@ pub struct Headers {
     /// The time at which the rate limit will be reset
     pub reset: ResetTime,
     /// The time window until the rate limit is lifted.
-    /// It is optional, because it might not be given,
-    /// in which case it needs to be inferred from the environment
+    /// It is marked optional, because it might not be provided,
+    /// in which case it needs to be inferred from the context
     pub window: Option<Duration>,
     /// Predicted vendor based on rate limit header
     pub vendor: Vendor,
     /// All candidates that matched the headers
-    pub candidates: Vec<Vendor>,
+    pub candidates: VendorMask,
 }
 
 impl Headers {
-    /// Extracts rate limits from HTTP headers.
+    /// Extracts rate limits from an iterator of HTTP headers.
     ///
     /// Different vendors (e.g. GitHub, Vimeo, Twitter) use different header
     /// names. This function attempts to identify the vendor based on the
@@ -48,17 +46,22 @@ impl Headers {
     /// formats. In this case, the library will try to parse the headers using
     /// the different variants until one succeeds.
     ///
+    /// When parsing headers, casing is significant.
+    /// For example, GitHub uses "x-ratelimit-remaining" while
+    /// Reddit uses "X-Ratelimit-Remaining."
+    /// This is also why we use an iterator of header key-value pairs instead of
+    /// a case-insensitive map like `http::HeaderMap`.
+    ///
     /// # Errors
     ///
     /// Returns an error if the headers do not contain a known rate limit
     /// format, or if the header values cannot be parsed.
-    pub fn new(headers: &HeaderMap) -> std::result::Result<Self, Error> {
+    pub fn new<'a, I>(headers: I) -> std::result::Result<Self, Error>
+    where
+        I: IntoIterator<Item = (&'a str, &'a str)>,
+    {
         let parser = Parser::new(headers);
-        let results = parser.parse()?;
-
-        // We sort by specificity in the parser, so the first one is the best match.
-        let (vendor, limit, remaining, reset, window) = results[0];
-        let candidates = results.iter().map(|(v, _, _, _, _)| *v).collect();
+        let (vendor, limit, remaining, reset, window, candidates) = parser.parse()?;
 
         Ok(Headers {
             limit,
@@ -93,18 +96,10 @@ impl FromStr for Headers {
     type Err = Error;
 
     fn from_str(map: &str) -> Result<Self> {
-        let mut headers = HeaderMap::new();
-        for line in map.lines() {
-            if let Some((k, v)) = line.split_once(':') {
-                if let (Ok(k), Ok(v)) = (
-                    http::header::HeaderName::from_str(k.trim()),
-                    http::header::HeaderValue::from_str(v.trim()),
-                ) {
-                    headers.insert(k, v);
-                }
-            }
-        }
-        Headers::new(&headers)
+        let iter = map
+            .lines()
+            .filter_map(|line| line.split_once(':').map(|(k, v)| (k.trim(), v.trim())));
+        Headers::new(iter)
     }
 }
 
@@ -112,7 +107,6 @@ impl FromStr for Headers {
 mod tests {
     use super::*;
     use crate::reset_time::ResetTimeKind;
-    use http::header::HeaderValue;
     use indoc::indoc;
     use time::{OffsetDateTime, macros::datetime};
 
@@ -125,33 +119,34 @@ mod tests {
         assert_eq!(map.vendor, Vendor::Github);
 
         let map =
-            Headers::from_str("RateLimit-Limit: 5000\nRatelimit-Remaining: 5\nRatelimit-Reset: 10")
+            Headers::from_str("RateLimit-Limit: 5000\nRateLimit-Remaining: 5\nRateLimit-Reset: 10")
                 .unwrap();
-        assert_eq!(map.vendor, Vendor::PolliDraft);
+        assert_eq!(map.vendor, Vendor::Unknown);
     }
 
     #[test]
     fn parse_reset_timestamp() {
-        let v = HeaderValue::from_str("1350085394").unwrap();
+        // Assume ResetTime::new now accepts standard references that match parsed strings
+        let v = "1350085394";
         assert_eq!(
-            ResetTime::new(&v, ResetTimeKind::Timestamp).unwrap(),
+            ResetTime::new(v, ResetTimeKind::Timestamp).unwrap(),
             ResetTime::DateTime(OffsetDateTime::from_unix_timestamp(1_350_085_394).unwrap())
         );
     }
 
     #[test]
     fn parse_reset_seconds() {
-        let v = HeaderValue::from_str("100").unwrap();
+        let v = "100";
         assert_eq!(
-            ResetTime::new(&v, ResetTimeKind::Seconds).unwrap(),
+            ResetTime::new(v, ResetTimeKind::Seconds).unwrap(),
             ResetTime::Seconds(100)
         );
     }
 
     #[test]
     fn parse_reset_datetime() {
-        let v = HeaderValue::from_str("Tue, 15 Nov 1994 08:12:31 GMT").unwrap();
-        let d = ResetTime::new(&v, ResetTimeKind::ImfFixdate);
+        let v = "Tue, 15 Nov 1994 08:12:31 GMT";
+        let d = ResetTime::new(v, ResetTimeKind::ImfFixdate);
         assert_eq!(
             d.unwrap(),
             ResetTime::DateTime(datetime!(1994-11-15 8:12:31 UTC))
@@ -170,7 +165,7 @@ mod tests {
         assert_eq!(rate.limit(), 5000);
         assert_eq!(rate.remaining(), 4987);
         assert_eq!(
-            rate.reset(),
+            rate.reset,
             ResetTime::DateTime(OffsetDateTime::from_unix_timestamp(1_350_085_394).unwrap())
         );
     }
@@ -186,7 +181,7 @@ mod tests {
         let rate = Headers::from_str(headers).unwrap();
         assert_eq!(rate.limit(), 122);
         assert_eq!(rate.remaining(), 22);
-        assert_eq!(rate.reset(), ResetTime::Seconds(30));
+        assert_eq!(rate.reset, ResetTime::Seconds(30));
     }
 
     #[test]
@@ -201,10 +196,8 @@ mod tests {
         assert_eq!(rate.limit(), 1500);
         assert_eq!(rate.remaining(), 1499);
         assert_eq!(
-            rate.reset(),
+            rate.reset,
             ResetTime::DateTime(
-                // We really only have millisecond resolution, but OffsetDateTime
-                // only provides nanosecond resolution.
                 OffsetDateTime::from_unix_timestamp_nanos(1_694_721_826_678_000_000).unwrap()
             )
         );
@@ -223,7 +216,7 @@ mod tests {
         assert_eq!(rate.limit(), 60);
         assert_eq!(rate.remaining(), 0);
         assert_eq!(
-            rate.reset(),
+            rate.reset,
             ResetTime::DateTime(OffsetDateTime::from_unix_timestamp(1_609_844_400).unwrap())
         );
     }
@@ -306,7 +299,7 @@ mod tests {
             Ratelimit-Reset: baz
         "};
 
-        // It finds the variant (PolliDraft) but fails to parse values
+        // It finds the generic fallback headers (or case-sensitive variant) but fails to parse values
         assert!(Headers::from_str(headers).is_err());
     }
 }

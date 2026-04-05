@@ -19,9 +19,10 @@ mod convert;
 mod error;
 mod parser;
 mod reset_time;
+mod vendors;
 
 pub mod headers;
-pub mod retryafter;
+pub mod retry_after;
 
 use std::str::FromStr;
 
@@ -29,8 +30,9 @@ use error::{Error, Result};
 use http::HeaderMap;
 use time::Duration;
 
-pub use headers::{Headers, Vendor};
+pub use headers::Headers;
 pub use reset_time::ResetTime;
+pub use vendors::{Vendor, VendorMask};
 
 /// The status of the rate limit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,19 +56,22 @@ pub enum Status {
 /// [ietf]: https://datatracker.ietf.org/doc/html/draft-polli-ratelimit-headers-00
 /// [retryafter]: https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Retry-After
 ///
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub enum RateLimit {
     /// Rate limit information as per the [IETF "Polly" draft][ietf].
     Rfc6585(headers::Headers),
     /// Rate limit information as per the [Retry-After][retryafter] header.
-    RetryAfter(retryafter::RateLimit),
+    RetryAfter(retry_after::RateLimit),
 }
 
 impl RateLimit {
     /// Create a new `RateLimit` from a `http::HeaderMap`.
     pub fn new(headers: &HeaderMap) -> std::result::Result<Self, Error> {
-        let rfc6585 = headers::Headers::new(headers);
-        let retryafter = retryafter::RateLimit::new(headers);
+        let iter = headers
+            .iter()
+            .filter_map(|(k, v)| Some((k.as_str(), v.to_str().ok()?)));
+        let rfc6585 = headers::Headers::new(iter);
+        let retryafter = retry_after::RateLimit::new(headers);
 
         match (rfc6585, retryafter) {
             (Ok(rfc6585), Ok(retryafter)) => {
@@ -135,18 +140,35 @@ impl FromStr for RateLimit {
     type Err = Error;
 
     fn from_str(map: &str) -> Result<Self> {
-        let mut headers = HeaderMap::new();
-        for line in map.lines() {
-            if let Some((k, v)) = line.split_once(':') {
-                if let (Ok(k), Ok(v)) = (
-                    http::header::HeaderName::from_str(k.trim()),
-                    http::header::HeaderValue::from_str(v.trim()),
-                ) {
-                    headers.insert(k, v);
-                }
+        let iter = map
+            .lines()
+            .filter_map(|line| line.split_once(':').map(|(k, v)| (k.trim(), v.trim())));
+
+        let rfc6585 = headers::Headers::new(iter.clone());
+
+        let mut headers_map = HeaderMap::new();
+        for (k, v) in iter {
+            if let (Ok(k), Ok(v)) = (
+                http::header::HeaderName::from_str(k),
+                http::header::HeaderValue::from_str(v),
+            ) {
+                headers_map.insert(k, v);
             }
         }
-        RateLimit::new(&headers)
+        let retryafter = retry_after::RateLimit::new(&headers_map);
+
+        match (rfc6585, retryafter) {
+            (Ok(r), Ok(a)) => {
+                if r.reset().seconds() > a.reset().seconds() {
+                    Ok(RateLimit::Rfc6585(r))
+                } else {
+                    Ok(RateLimit::RetryAfter(a))
+                }
+            }
+            (Ok(r), Err(_)) => Ok(RateLimit::Rfc6585(r)),
+            (Err(_), Ok(a)) => Ok(RateLimit::RetryAfter(a)),
+            (Err(e), Err(_)) => Err(e),
+        }
     }
 }
 

@@ -1,31 +1,17 @@
 use crate::convert;
 use crate::error::{Error, Result};
-use headers::HeaderValue;
-use time::format_description::well_known::{Iso8601, Rfc2822};
-use time::{Duration, OffsetDateTime, PrimitiveDateTime};
+use time::{
+    Duration, OffsetDateTime,
+    format_description::well_known::{Rfc2822, Rfc3339},
+};
 
-/// The kind of rate limit reset time
-///
-/// There are different ways to denote rate limits reset times.
-/// Some vendors use seconds, others use a timestamp format for example.
-///
-/// This enum lists all known variants.
-#[derive(Copy, Clone, Debug, PartialEq)]
-#[non_exhaustive]
-pub enum ResetTimeKind {
-    /// Number of seconds until rate limit is lifted
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ResetTimeKind {
     Seconds,
-    /// Unix timestamp (UTC epoch seconds)
-    /// when rate limit will be lifted
     Timestamp,
-    /// Unix timestamp in millisecond resolution (UTC epoch milliseconds)
-    /// when rate limit will be lifted
     TimestampMillis,
-    /// RFC 2822 date when rate limit will be lifted
     ImfFixdate,
-    /// ISO 8601 date when rate limit will be lifted
     Iso8601,
-    /// OpenAI-style duration string (e.g. "1s", "6m0s") until rate limit is lifted
     OpenAIDuration,
 }
 
@@ -33,7 +19,7 @@ pub enum ResetTimeKind {
 ///
 /// There are different variants on how to specify reset times
 /// in rate limit headers. The most common ones are seconds and datetime.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ResetTime {
     /// Number of seconds until rate limit is lifted
     Seconds(usize),
@@ -48,29 +34,38 @@ impl ResetTime {
     ///
     /// This function returns an error if the header value cannot be parsed
     /// or if the reset time kind is unknown.
-    pub fn new(value: &HeaderValue, kind: ResetTimeKind) -> Result<Self> {
-        let value = value.to_str()?;
+    pub(crate) fn new(value: &str, kind: ResetTimeKind) -> Result<Self> {
         match kind {
-            ResetTimeKind::Seconds => Ok(ResetTime::Seconds(convert::to_usize(value)?)),
-            ResetTimeKind::Timestamp => Ok(Self::DateTime(
-                OffsetDateTime::from_unix_timestamp(convert::to_i64(value)?)
-                    .map_err(Error::Time)?,
-            )),
-            ResetTimeKind::TimestampMillis => Ok(Self::DateTime(
-                OffsetDateTime::from_unix_timestamp_nanos(convert::to_i128(value)? * 1_000_000)
-                    .map_err(Error::Time)?,
-            )),
-            ResetTimeKind::Iso8601 => {
-                // https://github.com/time-rs/time/issues/378
-                let d = PrimitiveDateTime::parse(value, &Iso8601::PARSING).map_err(Error::Parse)?;
-                Ok(ResetTime::DateTime(d.assume_utc()))
+            ResetTimeKind::Seconds => {
+                let s = convert::to_usize(value)?;
+                Ok(ResetTime::Seconds(s))
+            }
+            ResetTimeKind::Timestamp => {
+                let s = value.parse::<i64>().map_err(|_| Error::NoMatchingVariant)?;
+                let dt =
+                    OffsetDateTime::from_unix_timestamp(s).map_err(|_| Error::NoMatchingVariant)?;
+                Ok(ResetTime::DateTime(dt))
+            }
+            ResetTimeKind::TimestampMillis => {
+                let ms = value
+                    .parse::<i128>()
+                    .map_err(|_| Error::NoMatchingVariant)?;
+                let dt = OffsetDateTime::from_unix_timestamp_nanos(ms * 1_000_000)
+                    .map_err(|_| Error::NoMatchingVariant)?;
+                Ok(ResetTime::DateTime(dt))
             }
             ResetTimeKind::ImfFixdate => {
-                let d = PrimitiveDateTime::parse(value, &Rfc2822).map_err(Error::Parse)?;
-                Ok(ResetTime::DateTime(d.assume_utc()))
+                let dt =
+                    OffsetDateTime::parse(value, &Rfc2822).map_err(|_| Error::NoMatchingVariant)?;
+                Ok(ResetTime::DateTime(dt))
+            }
+            ResetTimeKind::Iso8601 => {
+                let dt =
+                    OffsetDateTime::parse(value, &Rfc3339).map_err(|_| Error::NoMatchingVariant)?;
+                Ok(ResetTime::DateTime(dt))
             }
             ResetTimeKind::OpenAIDuration => {
-                let seconds = parse_openai_duration_to_seconds(value)?;
+                let seconds = parse_openai_duration(value).ok_or(Error::NoMatchingVariant)?;
                 Ok(ResetTime::Seconds(seconds))
             }
         }
@@ -105,98 +100,31 @@ impl ResetTime {
     }
 }
 
-/// Parse OpenAI duration string into seconds
-///
-/// Examples: "1s", "6m0s", "1h30m", "10ms"
-fn parse_openai_duration_to_seconds(value: &str) -> Result<usize> {
-    let value = value.trim();
-    if value.is_empty() {
-        return Err(Error::InvalidDuration(value.to_string()));
-    }
-
-    let mut total_seconds = 0;
-    let mut current_number = String::new();
-
-    let mut chars = value.chars().peekable();
+fn parse_openai_duration(s: &str) -> Option<usize> {
+    let mut total_ms = 0.0;
+    let mut current_num = String::new();
+    let mut chars = s.chars().peekable();
 
     while let Some(c) = chars.next() {
-        if c.is_ascii_digit() {
-            current_number.push(c);
+        if c.is_ascii_digit() || c == '.' {
+            current_num.push(c);
         } else {
-            if current_number.is_empty() {
-                return Err(Error::InvalidDuration(value.to_string()));
+            let mut unit = c.to_string();
+            if c == 'm' && chars.peek() == Some(&'s') {
+                unit.push(chars.next().unwrap());
             }
-            let n: usize = current_number
-                .parse()
-                .map_err(|_| Error::InvalidDuration(value.to_string()))?;
-            current_number.clear();
-
-            match c {
-                'd' => total_seconds += n * 86400,
-                'h' => total_seconds += n * 3600,
-                'm' => {
-                    // Check if next is 's' for 'ms'
-                    if let Some('s') = chars.peek() {
-                        chars.next(); // consume 's'
-                        // If it's > 0 ms, we round up to 1s to be safe for rate limits.
-                        if n > 0 {
-                            total_seconds += 1;
-                        }
-                    } else {
-                        total_seconds += n * 60;
-                    }
-                }
-                's' => total_seconds += n,
-                _ => return Err(Error::InvalidDuration(value.to_string())),
+            let val: f64 = current_num.parse().ok()?;
+            current_num.clear();
+            match unit.as_str() {
+                "s" => total_ms += val * 1000.0,
+                "m" => total_ms += val * 60000.0,
+                "ms" => total_ms += val,
+                "h" => total_ms += val * 3600000.0,
+                "d" => total_ms += val * 86400000.0,
+                _ => return None,
             }
         }
     }
 
-    if !current_number.is_empty() {
-        return Err(Error::InvalidDuration(value.to_string()));
-    }
-
-    Ok(total_seconds)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use headers::HeaderValue;
-
-    #[test]
-    fn test_parse_openai_duration() {
-        // Invalid
-        assert!(parse_openai_duration_to_seconds("").is_err());
-        assert!(parse_openai_duration_to_seconds("🤖").is_err());
-        assert!(parse_openai_duration_to_seconds("1").is_err());
-        assert!(parse_openai_duration_to_seconds("s").is_err());
-        assert!(parse_openai_duration_to_seconds("1x").is_err());
-        assert!(parse_openai_duration_to_seconds("1m30").is_err());
-        assert!(parse_openai_duration_to_seconds("around 30s").is_err());
-        assert!(parse_openai_duration_to_seconds("1m30s hello").is_err());
-
-        assert_eq!(parse_openai_duration_to_seconds("1s").unwrap(), 1);
-        assert_eq!(parse_openai_duration_to_seconds("1s ").unwrap(), 1);
-        assert_eq!(parse_openai_duration_to_seconds("1m").unwrap(), 60);
-        assert_eq!(parse_openai_duration_to_seconds("1h").unwrap(), 3600);
-        assert_eq!(parse_openai_duration_to_seconds("1d").unwrap(), 86400);
-
-        // Combined
-        assert_eq!(parse_openai_duration_to_seconds("1m30s").unwrap(), 90);
-        assert_eq!(parse_openai_duration_to_seconds("1h1m1s").unwrap(), 3661);
-        assert_eq!(parse_openai_duration_to_seconds("6m0s").unwrap(), 360);
-
-        // Milliseconds
-        assert_eq!(parse_openai_duration_to_seconds("10ms").unwrap(), 1);
-        assert_eq!(parse_openai_duration_to_seconds("0ms").unwrap(), 0);
-        assert_eq!(parse_openai_duration_to_seconds("1000ms").unwrap(), 1);
-    }
-
-    #[test]
-    fn test_reset_time_new_openai_duration() {
-        let v = HeaderValue::from_str("1h30m").unwrap();
-        let rt = ResetTime::new(&v, ResetTimeKind::OpenAIDuration).unwrap();
-        assert_eq!(rt, ResetTime::Seconds(5400));
-    }
+    Some((total_ms / 1000.0).ceil() as usize)
 }

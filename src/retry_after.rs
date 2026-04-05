@@ -8,7 +8,7 @@ use time::{Date, format_description::well_known::Rfc2822};
 
 use crate::reset_time::{ResetTime, ResetTimeKind};
 
-use super::error::{Error, Result};
+use crate::error::{Error, Result};
 
 /// HTTP rate limits as parsed from header values
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -24,10 +24,11 @@ impl RateLimit {
     pub fn new(headers: &HeaderMap) -> std::result::Result<Self, Error> {
         let reset = match headers.get(http::header::RETRY_AFTER) {
             Some(retry_after) => {
-                if Date::parse(retry_after.to_str()?, &Rfc2822).is_ok() {
-                    ResetTime::new(retry_after, ResetTimeKind::ImfFixdate)?
+                let retry_after_str = retry_after.to_str()?;
+                if Date::parse(retry_after_str, &Rfc2822).is_ok() {
+                    ResetTime::new(retry_after_str, ResetTimeKind::ImfFixdate)?
                 } else {
-                    ResetTime::new(retry_after, ResetTimeKind::Seconds)?
+                    ResetTime::new(retry_after_str, ResetTimeKind::Seconds)?
                 }
             }
             None => return Err(Error::MissingRetryAfter),

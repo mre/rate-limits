@@ -28,7 +28,11 @@ assert_eq!(
         ),
         window: Some(Duration::HOUR),
         vendor: Vendor::Github,
-        candidates: vec![Vendor::Github, Vendor::Twilio],
+        candidates: {
+            let mut mask = rate_limits::VendorMask::empty();
+            mask.insert(Vendor::Github);
+            mask
+        },
     }),
 );
 ```
@@ -59,7 +63,11 @@ assert_eq!(
         ),
         window: Some(Duration::HOUR),
         vendor: Vendor::Github,
-        candidates: vec![Vendor::Github, Vendor::Twilio],
+        candidates: {
+            let mut mask = rate_limits::VendorMask::empty();
+            mask.insert(Vendor::Github);
+            mask
+        },
     }),
 );
 ```

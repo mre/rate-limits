@@ -95,7 +95,7 @@ impl VendorMask {
 
     /// Adds a vendor to the mask.
     #[inline]
-    pub fn insert(&mut self, vendor: Vendor) {
+    pub const fn insert(&mut self, vendor: Vendor) {
         if let Some(bit) = vendor.bit() {
             self.0 |= bit;
         }
@@ -103,7 +103,7 @@ impl VendorMask {
 
     /// Removes a vendor from the mask.
     #[inline]
-    pub fn remove(&mut self, vendor: Vendor) {
+    pub const fn remove(&mut self, vendor: Vendor) {
         if let Some(bit) = vendor.bit() {
             self.0 &= !bit;
         }

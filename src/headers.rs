@@ -61,16 +61,7 @@ impl Headers {
         I: IntoIterator<Item = (&'a str, &'a str)>,
     {
         let parser = Parser::new(headers);
-        let (vendor, limit, remaining, reset, window, candidates) = parser.parse()?;
-
-        Ok(Headers {
-            limit,
-            remaining,
-            reset,
-            window,
-            vendor,
-            candidates,
-        })
+        parser.parse()
     }
 
     /// Get the number of requests allowed in the time window

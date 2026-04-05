@@ -13,8 +13,13 @@ mod cli {
         headers.insert("X-RATELIMIT-REMAINING", "4987".parse().unwrap());
         headers.insert("X-RATELIMIT-RESET", "1350085394".parse().unwrap());
 
+        let iter: Vec<_> = headers
+            .iter()
+            .filter_map(|(k, v)| Some((k.as_str(), v.to_str().ok()?)))
+            .collect();
+
         assert_eq!(
-            RateLimit::new(&headers).unwrap(),
+            RateLimit::new(iter).unwrap(),
             RateLimit::Rfc6585(headers::Headers {
                 limit: 5000,
                 remaining: 4987,

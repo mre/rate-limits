@@ -40,7 +40,7 @@ assert_eq!(
 Also takes the `Retry-After` header into account when calculating the reset
 time.
 
-[`http::HeaderMap`][headermap] is supported as well:
+[`http::HeaderMap`][headermap] is supported as well, though you must turn it into an iterator first. Note that `HeaderMap` normalizes keys to lowercase, which discards original casing and might degrade vendor fingerprinting precision.
 
 ```rust
 use std::str::FromStr;
@@ -53,8 +53,13 @@ headers.insert("X-RATELIMIT-LIMIT", "5000".parse().unwrap());
 headers.insert("X-RATELIMIT-REMAINING", "4987".parse().unwrap());
 headers.insert("X-RATELIMIT-RESET", "1350085394".parse().unwrap());
 
+let iter: Vec<_> = headers
+    .iter()
+    .filter_map(|(k, v)| Some((k.as_str(), v.to_str().ok()?)))
+    .collect();
+
 assert_eq!(
-    RateLimit::new(&headers).unwrap(),
+    RateLimit::new(iter).unwrap(),
     RateLimit::Rfc6585(Headers {
         limit: 5000,
         remaining: 4987,

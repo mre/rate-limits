@@ -3,7 +3,6 @@
 //! See <https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Retry-After>
 use std::str::FromStr;
 
-use http::HeaderMap;
 use time::{Date, format_description::well_known::Rfc2822};
 
 use crate::reset_time::{ResetTime, ResetTimeKind};
@@ -21,10 +20,20 @@ impl RateLimit {
     /// Rate limit implementation based on `Retry-After` header value
     ///
     /// See <https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Retry-After>
-    pub fn new(headers: &HeaderMap) -> std::result::Result<Self, Error> {
-        let reset = match headers.get(http::header::RETRY_AFTER) {
-            Some(retry_after) => {
-                let retry_after_str = retry_after.to_str()?;
+    pub fn new<'a, I>(headers: I) -> std::result::Result<Self, Error>
+    where
+        I: IntoIterator<Item = (&'a str, &'a str)>,
+    {
+        let mut retry_after_val = None;
+        for (k, v) in headers {
+            if k.eq_ignore_ascii_case("retry-after") {
+                retry_after_val = Some(v);
+                break;
+            }
+        }
+
+        let reset = match retry_after_val {
+            Some(retry_after_str) => {
                 if Date::parse(retry_after_str, &Rfc2822).is_ok() {
                     ResetTime::new(retry_after_str, ResetTimeKind::ImfFixdate)?
                 } else {
@@ -48,18 +57,10 @@ impl FromStr for RateLimit {
     type Err = Error;
 
     fn from_str(map: &str) -> Result<Self> {
-        let mut headers = HeaderMap::new();
-        for line in map.lines() {
-            if let Some((k, v)) = line.split_once(':') {
-                if let (Ok(k), Ok(v)) = (
-                    http::header::HeaderName::from_str(k.trim()),
-                    http::header::HeaderValue::from_str(v.trim()),
-                ) {
-                    headers.insert(k, v);
-                }
-            }
-        }
-        RateLimit::new(&headers)
+        let iter = map
+            .lines()
+            .filter_map(|line| line.split_once(':').map(|(k, v)| (k.trim(), v.trim())));
+        RateLimit::new(iter)
     }
 }
 

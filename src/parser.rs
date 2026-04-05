@@ -1,5 +1,6 @@
 use crate::convert;
 use crate::error::{Error, Result};
+use crate::headers::Headers;
 use crate::reset_time::{ResetTime, ResetTimeKind};
 use crate::vendors::{VENDORS, Vendor, VendorMask, VendorSpec};
 use time::Duration;
@@ -11,6 +12,7 @@ where
     iter: I,
 }
 
+#[derive(Default)]
 struct VendorState<'a> {
     limit: Option<&'a str>,
     remaining: Option<&'a str>,
@@ -22,20 +24,11 @@ impl<'a, I> Parser<'a, I>
 where
     I: IntoIterator<Item = (&'a str, &'a str)>,
 {
-    pub(crate) fn new(iter: I) -> Self {
+    pub(crate) const fn new(iter: I) -> Self {
         Self { iter }
     }
 
-    pub(crate) fn parse(
-        self,
-    ) -> Result<(
-        Vendor,
-        usize,
-        usize,
-        ResetTime,
-        Option<Duration>,
-        VendorMask,
-    )> {
+    pub(crate) fn parse(self) -> Result<Headers> {
         let mut states: [VendorState<'a>; 10] = Default::default(); // 10 vendors in VENDORS
         let mut fallback_limit = None;
         let mut fallback_remaining = None;
@@ -75,7 +68,7 @@ where
             }
         }
 
-        let mut mask = VendorMask::empty();
+        let mut candidates = VendorMask::empty();
         let mut parsed_results = Vec::new();
 
         for (i, spec) in VENDORS.iter().enumerate() {
@@ -84,30 +77,41 @@ where
             if state.remaining.is_some()
                 && state.reset.is_some()
                 && (state.limit.is_some() || state.used.is_some())
+                && let Ok(res) = Self::try_parse_vendor_spec(spec, state)
             {
-                if let Ok(res) = Self::try_parse_spec(spec, state) {
-                    mask.insert(spec.vendor);
-                    let mut specificity = 2;
-                    if state.limit.is_some() {
-                        specificity += 1;
-                    }
-                    if state.used.is_some() {
-                        specificity += 1;
-                    }
-                    parsed_results.push((specificity, res));
+                // We found a valid vendor spec, add it to candidates
+                candidates.insert(spec.vendor);
+
+                // Calculate specificity score: 2 for remaining and reset, +1 for limit, +1 for used
+                let mut specificity = 2;
+                if state.limit.is_some() {
+                    specificity += 1;
                 }
+                if state.used.is_some() {
+                    specificity += 1;
+                }
+                parsed_results.push((specificity, res));
             }
         }
 
+        // Sort by specificity (descending) where specificity is determined by
+        // how many of the expected headers were found (limit, used, remaining,
+        // reset)
         parsed_results.sort_by_key(|&(score, _)| std::cmp::Reverse(score));
 
-        if parsed_results.len() == 1 {
-            let (_, (v, l, rem, res, dur)) = parsed_results.into_iter().next().unwrap();
-            return Ok((v, l, rem, res, dur, mask));
-        } else if parsed_results.len() > 1 {
-            // Multiple matched, use the first one's values but return Unknown vendor and the mask
-            let (_, (_, l, rem, res, dur)) = parsed_results.into_iter().next().unwrap();
-            return Ok((Vendor::Unknown, l, rem, res, dur, mask));
+        let len = parsed_results.len();
+        let (_, (vendor, limit, remaining, reset, window)) =
+            parsed_results.into_iter().next().unwrap();
+        if len >= 1 {
+            let vendor = if len == 1 { vendor } else { Vendor::Unknown };
+            return Ok(Headers {
+                limit,
+                remaining,
+                reset,
+                window,
+                vendor,
+                candidates,
+            });
         }
 
         // Fallback
@@ -131,31 +135,38 @@ where
                 return Err(Error::NoMatchingVariant);
             };
 
-            return Ok((
-                Vendor::Unknown,
+            return Ok(Headers {
                 limit,
                 remaining,
                 reset,
-                None,
-                VendorMask::empty(),
-            ));
+                window: None,
+                vendor: Vendor::Unknown,
+                candidates: VendorMask::empty(),
+            });
         }
 
         Err(Error::NoMatchingVariant)
     }
 
-    fn try_parse_spec(
+    /// Try to parse a vendor spec from the given state.
+    ///
+    /// This checks if the required headers are present and can be parsed, and
+    /// returns the parsed values if successful.
+    fn try_parse_vendor_spec(
         spec: &VendorSpec,
         state: &VendorState,
     ) -> Result<(Vendor, usize, usize, ResetTime, Option<Duration>)> {
         let remaining = convert::to_usize(state.remaining.ok_or(Error::MissingRemaining)?)?;
 
         let limit = if let Some(h) = state.limit {
+            // If limit header is present, use it directly
             convert::to_usize(h)?
         } else if let Some(u) = state.used {
+            // If limit is missing but used is present, we can calculate limit as used + remaining
             let used = convert::to_usize(u)?;
             used.saturating_add(remaining)
         } else {
+            // If both limit and used are missing, we cannot determine the limit
             return Err(Error::MissingLimit);
         };
 
@@ -163,16 +174,5 @@ where
         let reset = ResetTime::new(reset_value, spec.reset_kind)?;
 
         Ok((spec.vendor, limit, remaining, reset, spec.duration))
-    }
-}
-
-impl<'a> Default for VendorState<'a> {
-    fn default() -> Self {
-        Self {
-            limit: None,
-            remaining: None,
-            reset: None,
-            used: None,
-        }
     }
 }

@@ -99,53 +99,55 @@ where
         // reset)
         parsed_results.sort_by_key(|&(score, _)| std::cmp::Reverse(score));
 
-        let len = parsed_results.len();
-        if let Some((_, (vendor, limit, remaining, reset, window))) =
-            parsed_results.into_iter().next()
-        {
-            let vendor = if len == 1 { vendor } else { Vendor::Unknown };
-            return Ok(Headers {
-                limit,
-                remaining,
-                reset,
-                window,
-                vendor,
-                candidates,
-            });
-        }
+        match parsed_results.len() {
+            0 => {
+                // Fallback
+                if let (Some(l_str), Some(rem_str), Some(res_str)) =
+                    (fallback_limit, fallback_remaining, fallback_reset)
+                {
+                    let limit = convert::to_usize(l_str)?;
+                    let remaining = convert::to_usize(rem_str)?;
 
-        // Fallback
-        if let (Some(l_str), Some(rem_str), Some(res_str)) =
-            (fallback_limit, fallback_remaining, fallback_reset)
-        {
-            let limit = convert::to_usize(l_str)?;
-            let remaining = convert::to_usize(rem_str)?;
+                    let reset = if let Ok(val) = convert::to_usize(res_str) {
+                        if val > 1_000_000_000 {
+                            ResetTime::new(res_str, ResetTimeKind::Timestamp)?
+                        } else {
+                            ResetTime::new(res_str, ResetTimeKind::Seconds)?
+                        }
+                    } else if let Ok(r) = ResetTime::new(res_str, ResetTimeKind::ImfFixdate) {
+                        r
+                    } else if let Ok(r) = ResetTime::new(res_str, ResetTimeKind::Iso8601) {
+                        r
+                    } else {
+                        return Err(Error::NoMatchingVariant);
+                    };
 
-            let reset = if let Ok(val) = convert::to_usize(res_str) {
-                if val > 1_000_000_000 {
-                    ResetTime::new(res_str, ResetTimeKind::Timestamp)?
+                    Ok(Headers {
+                        limit,
+                        remaining,
+                        reset,
+                        window: None,
+                        vendor: Vendor::Unknown,
+                        candidates: VendorMask::empty(),
+                    })
                 } else {
-                    ResetTime::new(res_str, ResetTimeKind::Seconds)?
+                    Err(Error::NoMatchingVariant)
                 }
-            } else if let Ok(r) = ResetTime::new(res_str, ResetTimeKind::ImfFixdate) {
-                r
-            } else if let Ok(r) = ResetTime::new(res_str, ResetTimeKind::Iso8601) {
-                r
-            } else {
-                return Err(Error::NoMatchingVariant);
-            };
-
-            return Ok(Headers {
-                limit,
-                remaining,
-                reset,
-                window: None,
-                vendor: Vendor::Unknown,
-                candidates: VendorMask::empty(),
-            });
+            }
+            len => {
+                let (_, (vendor, limit, remaining, reset, window)) =
+                    parsed_results.into_iter().next().unwrap();
+                let vendor = if len == 1 { vendor } else { Vendor::Unknown };
+                Ok(Headers {
+                    limit,
+                    remaining,
+                    reset,
+                    window,
+                    vendor,
+                    candidates,
+                })
+            }
         }
-
-        Err(Error::NoMatchingVariant)
     }
 
     /// Try to parse a vendor spec from the given state.

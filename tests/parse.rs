@@ -21,10 +21,11 @@ mod cli {
                 reset: ResetTime::DateTime(
                     OffsetDateTime::from_unix_timestamp(1350085394).unwrap()
                 ),
-                window: Some(Duration::HOUR),
+                window: None,
                 vendor: Vendor::Unknown,
                 candidates: {
                     let mut mask = rate_limits::VendorMask::empty();
+                    mask.insert(rate_limits::Vendor::Discord);
                     mask.insert(rate_limits::Vendor::Github);
                     mask.insert(rate_limits::Vendor::Twilio);
                     mask

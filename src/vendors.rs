@@ -7,12 +7,15 @@ use time::Duration;
 /// which define how to parse them.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Vendor {
-    /// Unknown vendor, but valid rate limit headers
+    /// Unknown vendor, but valid rate limit headers.
+    ///
+    /// APIs like Notion, Figma, Supabase, and Twitch rely on standard headers
+    /// and are officially and fully supported via this generic fallback.
     Unknown,
-    /// Rate limit headers as defined in the `polli-ratelimit-headers-00` draft
-    PolliDraft,
     /// Akamai rate limit headers
     Akamai,
+    /// Discord rate limit headers
+    Discord,
     /// Github API rate limit headers
     Github,
     /// Gitlab rate limit headers
@@ -21,6 +24,8 @@ pub enum Vendor {
     Linear,
     /// OpenAI rate limit headers
     OpenAI,
+    /// Rate limit headers as defined in the `polli-ratelimit-headers-00` draft
+    PolliDraft,
     /// Reddit rate limit headers
     Reddit,
     /// Twilio rate limit headers
@@ -37,28 +42,30 @@ impl Vendor {
     pub(crate) const fn bit(self) -> Option<u64> {
         match self {
             Vendor::Unknown => None,
-            Vendor::PolliDraft => Some(1 << 0),
-            Vendor::Akamai => Some(1 << 1),
+            Vendor::Akamai => Some(1 << 0),
+            Vendor::Discord => Some(1 << 1),
             Vendor::Github => Some(1 << 2),
             Vendor::Gitlab => Some(1 << 3),
             Vendor::Linear => Some(1 << 4),
             Vendor::OpenAI => Some(1 << 5),
-            Vendor::Reddit => Some(1 << 6),
-            Vendor::Twilio => Some(1 << 7),
-            Vendor::Twitter => Some(1 << 8),
-            Vendor::Vimeo => Some(1 << 9),
+            Vendor::PolliDraft => Some(1 << 6),
+            Vendor::Reddit => Some(1 << 7),
+            Vendor::Twilio => Some(1 << 8),
+            Vendor::Twitter => Some(1 << 9),
+            Vendor::Vimeo => Some(1 << 10),
         }
     }
 
     /// Returns a list of all identifiable vendors (excluding Unknown).
     pub(crate) const fn identifiable() -> &'static [Vendor] {
         &[
-            Vendor::PolliDraft,
             Vendor::Akamai,
+            Vendor::Discord,
             Vendor::Github,
             Vendor::Gitlab,
             Vendor::Linear,
             Vendor::OpenAI,
+            Vendor::PolliDraft,
             Vendor::Reddit,
             Vendor::Twilio,
             Vendor::Twitter,
@@ -221,6 +228,7 @@ impl VendorSpec {
 
 pub(crate) static VENDORS: &[VendorSpec] = &[
     // IETF Draft Headers (https://datatracker.ietf.org/doc/html/draft-polli-ratelimit-headers-00)
+    // Placed first to prioritize `Seconds` parsing over identically-named `Timestamp` headers (e.g. Gitlab)
     VendorSpec::new(
         Vendor::PolliDraft,
         Some("RateLimit-Limit"),
@@ -232,6 +240,7 @@ pub(crate) static VENDORS: &[VendorSpec] = &[
         None,
     ),
     // Reddit (https://support.reddithelp.com/hc/en-us/articles/16160319875092-Reddit-Data-API-Wiki)
+    // Placed before Github to prioritize `Seconds` over `Timestamp` when parsing X-Ratelimit-Used
     VendorSpec::new(
         Vendor::Reddit,
         None,
@@ -241,6 +250,33 @@ pub(crate) static VENDORS: &[VendorSpec] = &[
         &[],
         ResetTimeKind::Seconds,
         Some(Duration::minutes(10)),
+    ),
+    // Akamai (https://techdocs.akamai.com/adaptive-media-delivery/reference/rate-limiting)
+    VendorSpec::new(
+        Vendor::Akamai,
+        Some("X-RateLimit-Limit"),
+        None,
+        "X-RateLimit-Remaining",
+        "X-RateLimit-Next",
+        &[],
+        ResetTimeKind::Iso8601,
+        Some(Duration::seconds(60)),
+    ),
+    // Discord (https://discord.com/developers/docs/topics/rate-limits)
+    VendorSpec::new(
+        Vendor::Discord,
+        Some("X-RateLimit-Limit"),
+        None,
+        "X-RateLimit-Remaining",
+        "X-RateLimit-Reset",
+        &[
+            "X-RateLimit-Reset-After",
+            "X-RateLimit-Bucket",
+            "X-RateLimit-Global",
+            "X-RateLimit-Scope",
+        ],
+        ResetTimeKind::Timestamp,
+        None,
     ),
     // Github (https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api)
     VendorSpec::new(
@@ -253,16 +289,16 @@ pub(crate) static VENDORS: &[VendorSpec] = &[
         ResetTimeKind::Timestamp,
         Some(Duration::HOUR),
     ),
-    // Twilio (https://docs.sendgrid.com/api-reference/how-to-use-the-sendgrid-v3-api/rate-limits)
+    // Gitlab (https://docs.gitlab.com/ee/administration/settings/user_and_ip_rate_limits.html#headers-returned-for-all-requests)
     VendorSpec::new(
-        Vendor::Twilio,
-        Some("X-RateLimit-Limit"),
-        None,
-        "X-RateLimit-Remaining",
-        "X-RateLimit-Reset",
-        &[],
+        Vendor::Gitlab,
+        Some("RateLimit-Limit"),
+        Some("RateLimit-Observed"),
+        "RateLimit-Remaining",
+        "RateLimit-Reset",
+        &["RateLimit-ResetTime", "RateLimit-Name"],
         ResetTimeKind::Timestamp,
-        None,
+        Some(Duration::seconds(60)),
     ),
     // Linear (https://linear.app/developers/rate-limiting)
     VendorSpec::new(
@@ -278,6 +314,32 @@ pub(crate) static VENDORS: &[VendorSpec] = &[
         ],
         ResetTimeKind::TimestampMillis,
         Some(Duration::hours(1)),
+    ),
+    // OpenAI (https://developers.openai.com/api/docs/guides/rate-limits)
+    VendorSpec::new(
+        Vendor::OpenAI,
+        Some("x-ratelimit-limit-requests"),
+        None,
+        "x-ratelimit-remaining-requests",
+        "x-ratelimit-reset-requests",
+        &[
+            "x-ratelimit-limit-tokens",
+            "x-ratelimit-remaining-tokens",
+            "x-ratelimit-reset-tokens",
+        ],
+        ResetTimeKind::OpenAIDuration,
+        None,
+    ),
+    // Twilio (https://docs.sendgrid.com/api-reference/how-to-use-the-sendgrid-v3-api/rate-limits)
+    VendorSpec::new(
+        Vendor::Twilio,
+        Some("X-RateLimit-Limit"),
+        None,
+        "X-RateLimit-Remaining",
+        "X-RateLimit-Reset",
+        &[],
+        ResetTimeKind::Timestamp,
+        None,
     ),
     // Twitter / X (https://docs.x.com/x-api/fundamentals/rate-limits)
     VendorSpec::new(
@@ -300,42 +362,5 @@ pub(crate) static VENDORS: &[VendorSpec] = &[
         &[],
         ResetTimeKind::ImfFixdate,
         Some(Duration::seconds(60)),
-    ),
-    // Gitlab (https://docs.gitlab.com/ee/administration/settings/user_and_ip_rate_limits.html#headers-returned-for-all-requests)
-    VendorSpec::new(
-        Vendor::Gitlab,
-        Some("RateLimit-Limit"),
-        Some("RateLimit-Observed"),
-        "RateLimit-Remaining",
-        "RateLimit-Reset",
-        &["RateLimit-ResetTime", "RateLimit-Name"],
-        ResetTimeKind::Timestamp,
-        Some(Duration::seconds(60)),
-    ),
-    // Akamai (https://techdocs.akamai.com/adaptive-media-delivery/reference/rate-limiting)
-    VendorSpec::new(
-        Vendor::Akamai,
-        Some("X-RateLimit-Limit"),
-        None,
-        "X-RateLimit-Remaining",
-        "X-RateLimit-Next",
-        &[],
-        ResetTimeKind::Iso8601,
-        Some(Duration::seconds(60)),
-    ),
-    // OpenAI (https://developers.openai.com/api/docs/guides/rate-limits)
-    VendorSpec::new(
-        Vendor::OpenAI,
-        Some("x-ratelimit-limit-requests"),
-        None,
-        "x-ratelimit-remaining-requests",
-        "x-ratelimit-reset-requests",
-        &[
-            "x-ratelimit-limit-tokens",
-            "x-ratelimit-remaining-tokens",
-            "x-ratelimit-reset-tokens",
-        ],
-        ResetTimeKind::OpenAIDuration,
-        None,
     ),
 ];

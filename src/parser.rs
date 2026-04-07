@@ -30,7 +30,7 @@ where
     }
 
     pub(crate) fn parse(self) -> Result<Headers> {
-        let mut states: [VendorState<'a>; 10] = Default::default(); // 10 vendors in VENDORS
+        let mut states: [VendorState<'a>; 11] = Default::default(); // 11 vendors in VENDORS
         let mut fallback_limit = None;
         let mut fallback_remaining = None;
         let mut fallback_reset = None;
@@ -44,12 +44,12 @@ where
                     states[i].reset = Some(v);
                 } else if spec
                     .limit_header
-                    .map_or(false, |h| k.eq_ignore_ascii_case(h))
+                    .is_some_and(|h| k.eq_ignore_ascii_case(h))
                 {
                     states[i].limit = Some(v);
                 } else if spec
                     .used_header
-                    .map_or(false, |h| k.eq_ignore_ascii_case(h))
+                    .is_some_and(|h| k.eq_ignore_ascii_case(h))
                 {
                     states[i].used = Some(v);
                 } else if spec.extra_headers.iter().any(|h| k.eq_ignore_ascii_case(h)) {

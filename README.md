@@ -26,10 +26,11 @@ assert_eq!(
         reset: ResetTime::DateTime(
             OffsetDateTime::from_unix_timestamp(1350085394).unwrap()
         ),
-        window: Some(Duration::HOUR),
+        window: None,
         vendor: Vendor::Unknown,
         candidates: {
             let mut mask = rate_limits::VendorMask::empty();
+            mask.insert(Vendor::Discord);
             mask.insert(Vendor::Github);
             mask.insert(Vendor::Twilio);
             mask
@@ -62,10 +63,11 @@ assert_eq!(
         reset: ResetTime::DateTime(
             OffsetDateTime::from_unix_timestamp(1350085394).unwrap()
         ),
-        window: Some(Duration::HOUR),
+        window: None,
         vendor: Vendor::Unknown,
         candidates: {
             let mut mask = rate_limits::VendorMask::empty();
+            mask.insert(Vendor::Discord);
             mask.insert(Vendor::Github);
             mask.insert(Vendor::Twilio);
             mask

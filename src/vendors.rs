@@ -68,8 +68,14 @@ impl Vendor {
 }
 
 /// A lightweight bitmask for tracking sets of candidates without allocation.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Default)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Default)]
 pub struct VendorMask(u64);
+
+impl std::fmt::Debug for VendorMask {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_list().entries(*self).finish()
+    }
+}
 
 impl VendorMask {
     /// Creates a new empty `VendorMask`.

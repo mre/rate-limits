@@ -29,7 +29,7 @@ use std::str::FromStr;
 use error::{Error, Result};
 use http::HeaderMap;
 
-use time::Duration;
+use std::time::Duration;
 
 pub use headers::Headers;
 pub use reset_time::ResetTime;
@@ -205,7 +205,7 @@ mod tests {
         let rate = RateLimit::from_str(headers).unwrap();
         assert!(rate.is_limited());
         match rate.status() {
-            Status::Wait(d) => assert_eq!(d, time::Duration::seconds(30)),
+            Status::Wait(d) => assert_eq!(d, std::time::Duration::from_secs(30)),
             _ => panic!("Expected Status::Wait"),
         }
 

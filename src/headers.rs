@@ -10,7 +10,7 @@ use crate::{
     vendors::{Vendor, VendorMask},
 };
 use http::HeaderMap;
-use time::Duration;
+use std::time::Duration;
 
 /// HTTP rate limits as parsed from header values
 #[derive(Copy, Clone, Debug, PartialEq)]

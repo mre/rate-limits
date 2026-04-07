@@ -10,7 +10,8 @@ The easiest way to use this crate is with [`http::HeaderMap`][headermap] (which 
 
 ```rust
 use std::str::FromStr;
-use time::{OffsetDateTime, Duration};
+use time::OffsetDateTime;
+use std::time::Duration;
 use rate_limits::{Vendor, VendorMask, RateLimit, ResetTime, Headers};
 use http::header::HeaderMap;
 
@@ -48,7 +49,8 @@ You can parse rate limits directly from raw string iterators or via `FromStr`:
 ```rust
 use indoc::indoc;
 use std::str::FromStr;
-use time::{OffsetDateTime, Duration};
+use time::OffsetDateTime;
+use std::time::Duration;
 use rate_limits::{Vendor, VendorMask, RateLimit, ResetTime, Headers};
 
 let headers = indoc! {"
@@ -71,7 +73,7 @@ assert_eq!(
         reset: ResetTime::DateTime(
             OffsetDateTime::from_unix_timestamp(1350085394).unwrap()
         ),
-        window: Some(Duration::HOUR),
+        window: Some(Duration::from_secs(3600)),
         vendor: Vendor::Github,
         candidates: VendorMask::from_iter([Vendor::Github]),
     }),

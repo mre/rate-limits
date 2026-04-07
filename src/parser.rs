@@ -3,7 +3,7 @@ use crate::error::{Error, Result};
 use crate::headers::Headers;
 use crate::reset_time::{ResetTime, ResetTimeKind};
 use crate::vendors::{VENDORS, Vendor, VendorMask, VendorSpec};
-use time::Duration;
+use std::time::Duration;
 
 pub(crate) struct Parser<'a, I>
 where

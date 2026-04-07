@@ -1,7 +1,7 @@
 use crate::convert;
 use crate::error::{Error, Result};
 use time::{
-    Duration, OffsetDateTime,
+    OffsetDateTime,
     format_description::well_known::{Rfc2822, Rfc3339},
 };
 
@@ -90,11 +90,12 @@ impl ResetTime {
 
     /// Convert reset time to duration
     #[must_use]
-    pub fn duration(&self) -> Duration {
+    pub fn duration(&self) -> std::time::Duration {
         match self {
-            ResetTime::Seconds(s) => Duration::seconds(*s as i64),
+            ResetTime::Seconds(s) => std::time::Duration::from_secs(*s as u64),
             ResetTime::DateTime(d) => {
-                Duration::seconds((*d - OffsetDateTime::now_utc()).whole_seconds())
+                let diff = *d - OffsetDateTime::now_utc();
+                std::time::Duration::try_from(diff).unwrap_or(std::time::Duration::ZERO)
             }
         }
     }

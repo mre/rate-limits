@@ -1,5 +1,5 @@
 use crate::reset_time::ResetTimeKind;
-use time::Duration;
+use std::time::Duration;
 
 /// Known vendors of rate limit headers
 ///
@@ -260,7 +260,7 @@ pub(crate) static VENDORS: &[VendorSpec] = &[
         "X-Ratelimit-Reset",
         &[],
         ResetTimeKind::Seconds,
-        Some(Duration::minutes(10)),
+        Some(Duration::from_secs(600)),
     ),
     // Akamai (https://techdocs.akamai.com/adaptive-media-delivery/reference/rate-limiting)
     VendorSpec::new(
@@ -271,7 +271,7 @@ pub(crate) static VENDORS: &[VendorSpec] = &[
         "X-RateLimit-Next",
         &[],
         ResetTimeKind::Iso8601,
-        Some(Duration::seconds(60)),
+        Some(Duration::from_secs(60)),
     ),
     // Discord (https://discord.com/developers/docs/topics/rate-limits)
     VendorSpec::new(
@@ -298,7 +298,7 @@ pub(crate) static VENDORS: &[VendorSpec] = &[
         "x-ratelimit-reset",
         &["x-ratelimit-resource"],
         ResetTimeKind::Timestamp,
-        Some(Duration::HOUR),
+        Some(Duration::from_secs(3600)),
     ),
     // Gitlab (https://docs.gitlab.com/ee/administration/settings/user_and_ip_rate_limits.html#headers-returned-for-all-requests)
     VendorSpec::new(
@@ -309,7 +309,7 @@ pub(crate) static VENDORS: &[VendorSpec] = &[
         "RateLimit-Reset",
         &["RateLimit-ResetTime", "RateLimit-Name"],
         ResetTimeKind::Timestamp,
-        Some(Duration::seconds(60)),
+        Some(Duration::from_secs(60)),
     ),
     // Linear (https://linear.app/developers/rate-limiting)
     VendorSpec::new(
@@ -324,7 +324,7 @@ pub(crate) static VENDORS: &[VendorSpec] = &[
             "X-RateLimit-Complexity-Reset",
         ],
         ResetTimeKind::TimestampMillis,
-        Some(Duration::hours(1)),
+        Some(Duration::from_secs(3600)),
     ),
     // OpenAI (https://developers.openai.com/api/docs/guides/rate-limits)
     VendorSpec::new(
@@ -361,7 +361,7 @@ pub(crate) static VENDORS: &[VendorSpec] = &[
         "x-rate-limit-reset",
         &[],
         ResetTimeKind::Timestamp,
-        Some(Duration::minutes(15)),
+        Some(Duration::from_secs(900)),
     ),
     // Vimeo (https://developer.vimeo.com/guidelines/rate-limiting)
     VendorSpec::new(
@@ -372,6 +372,6 @@ pub(crate) static VENDORS: &[VendorSpec] = &[
         "X-RateLimit-Reset",
         &[],
         ResetTimeKind::ImfFixdate,
-        Some(Duration::seconds(60)),
+        Some(Duration::from_secs(60)),
     ),
 ];

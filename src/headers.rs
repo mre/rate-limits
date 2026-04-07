@@ -9,6 +9,7 @@ use crate::{
     reset_time::ResetTime,
     vendors::{Vendor, VendorMask},
 };
+use http::HeaderMap;
 use time::Duration;
 
 /// HTTP rate limits as parsed from header values
@@ -56,7 +57,16 @@ impl Headers {
     ///
     /// Returns an error if the headers do not contain a known rate limit
     /// format, or if the header values cannot be parsed.
-    pub fn new<'a, I>(headers: I) -> std::result::Result<Self, Error>
+    pub fn new(headers: &HeaderMap) -> std::result::Result<Self, Error> {
+        let iter: Vec<_> = headers
+            .iter()
+            .filter_map(|(k, v)| Some((k.as_str(), v.to_str().ok()?)))
+            .collect();
+        Self::from_iter(iter)
+    }
+
+    /// Extracts rate limits from an iterator of HTTP headers.
+    pub fn from_iter<'a, I>(headers: I) -> std::result::Result<Self, Error>
     where
         I: IntoIterator<Item = (&'a str, &'a str)>,
     {
@@ -90,7 +100,7 @@ impl FromStr for Headers {
         let iter = map
             .lines()
             .filter_map(|line| line.split_once(':').map(|(k, v)| (k.trim(), v.trim())));
-        Headers::new(iter)
+        Headers::from_iter(iter)
     }
 }
 
@@ -107,7 +117,8 @@ mod tests {
             "x-ratelimit-limit: 5000\nx-ratelimit-remaining: 5\nx-ratelimit-reset: 1350085394",
         )
         .unwrap();
-        assert_eq!(map.vendor, Vendor::Github);
+        assert_eq!(map.vendor, Vendor::Unknown);
+        assert!(map.candidates.contains(Vendor::Github));
 
         let map =
             Headers::from_str("RateLimit-Limit: 5000\nRateLimit-Remaining: 5\nRateLimit-Reset: 10")

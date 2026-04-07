@@ -27,6 +27,7 @@ pub mod retry_after;
 use std::str::FromStr;
 
 use error::{Error, Result};
+use http::HeaderMap;
 
 use time::Duration;
 
@@ -65,13 +66,22 @@ pub enum RateLimit {
 }
 
 impl RateLimit {
+    /// Create a new `RateLimit` from a `http::HeaderMap`.
+    pub fn new(headers: &HeaderMap) -> std::result::Result<Self, Error> {
+        let iter: Vec<_> = headers
+            .iter()
+            .filter_map(|(k, v)| Some((k.as_str(), v.to_str().ok()?)))
+            .collect();
+        Self::from_iter(iter)
+    }
+
     /// Create a new `RateLimit` from an iterator over HTTP headers.
-    pub fn new<'a, I>(headers: I) -> std::result::Result<Self, Error>
+    pub fn from_iter<'a, I>(headers: I) -> std::result::Result<Self, Error>
     where
         I: IntoIterator<Item = (&'a str, &'a str)> + Clone,
     {
-        let rfc6585 = headers::Headers::new(headers.clone());
-        let retryafter = retry_after::RateLimit::new(headers);
+        let rfc6585 = headers::Headers::from_iter(headers.clone());
+        let retryafter = retry_after::RateLimit::from_iter(headers);
 
         match (rfc6585, retryafter) {
             (Ok(rfc6585), Ok(retryafter)) => {
@@ -143,7 +153,7 @@ impl FromStr for RateLimit {
         let iter = map
             .lines()
             .filter_map(|line| line.split_once(':').map(|(k, v)| (k.trim(), v.trim())));
-        RateLimit::new(iter)
+        RateLimit::from_iter(iter)
     }
 }
 

@@ -27,10 +27,11 @@ assert_eq!(
             OffsetDateTime::from_unix_timestamp(1350085394).unwrap()
         ),
         window: Some(Duration::HOUR),
-        vendor: Vendor::Github,
+        vendor: Vendor::Unknown,
         candidates: {
             let mut mask = rate_limits::VendorMask::empty();
             mask.insert(Vendor::Github);
+            mask.insert(Vendor::Twilio);
             mask
         },
     }),
@@ -40,7 +41,7 @@ assert_eq!(
 Also takes the `Retry-After` header into account when calculating the reset
 time.
 
-[`http::HeaderMap`][headermap] is supported as well, though you must turn it into an iterator first. Note that `HeaderMap` normalizes keys to lowercase, which discards original casing and might degrade vendor fingerprinting precision.
+[`http::HeaderMap`][headermap] is supported as well:
 
 ```rust
 use std::str::FromStr;
@@ -53,13 +54,8 @@ headers.insert("X-RATELIMIT-LIMIT", "5000".parse().unwrap());
 headers.insert("X-RATELIMIT-REMAINING", "4987".parse().unwrap());
 headers.insert("X-RATELIMIT-RESET", "1350085394".parse().unwrap());
 
-let iter: Vec<_> = headers
-    .iter()
-    .filter_map(|(k, v)| Some((k.as_str(), v.to_str().ok()?)))
-    .collect();
-
 assert_eq!(
-    RateLimit::new(iter).unwrap(),
+    RateLimit::new(&headers).unwrap(),
     RateLimit::Rfc6585(Headers {
         limit: 5000,
         remaining: 4987,
@@ -67,10 +63,11 @@ assert_eq!(
             OffsetDateTime::from_unix_timestamp(1350085394).unwrap()
         ),
         window: Some(Duration::HOUR),
-        vendor: Vendor::Github,
+        vendor: Vendor::Unknown,
         candidates: {
             let mut mask = rate_limits::VendorMask::empty();
             mask.insert(Vendor::Github);
+            mask.insert(Vendor::Twilio);
             mask
         },
     }),

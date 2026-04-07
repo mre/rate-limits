@@ -13,13 +13,8 @@ mod cli {
         headers.insert("X-RATELIMIT-REMAINING", "4987".parse().unwrap());
         headers.insert("X-RATELIMIT-RESET", "1350085394".parse().unwrap());
 
-        let iter: Vec<_> = headers
-            .iter()
-            .filter_map(|(k, v)| Some((k.as_str(), v.to_str().ok()?)))
-            .collect();
-
         assert_eq!(
-            RateLimit::new(iter).unwrap(),
+            RateLimit::new(&headers).unwrap(),
             RateLimit::Rfc6585(headers::Headers {
                 limit: 5000,
                 remaining: 4987,
@@ -27,10 +22,11 @@ mod cli {
                     OffsetDateTime::from_unix_timestamp(1350085394).unwrap()
                 ),
                 window: Some(Duration::HOUR),
-                vendor: Vendor::Github,
+                vendor: Vendor::Unknown,
                 candidates: {
                     let mut mask = rate_limits::VendorMask::empty();
                     mask.insert(rate_limits::Vendor::Github);
+                    mask.insert(rate_limits::Vendor::Twilio);
                     mask
                 },
             }),

@@ -20,7 +20,16 @@ impl RateLimit {
     /// Rate limit implementation based on `Retry-After` header value
     ///
     /// See <https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Retry-After>
-    pub fn new<'a, I>(headers: I) -> std::result::Result<Self, Error>
+    pub fn new(headers: &http::HeaderMap) -> std::result::Result<Self, Error> {
+        let iter: Vec<_> = headers
+            .iter()
+            .filter_map(|(k, v)| Some((k.as_str(), v.to_str().ok()?)))
+            .collect();
+        Self::from_iter(iter)
+    }
+
+    /// Rate limit implementation based on `Retry-After` header value from an iterator
+    pub fn from_iter<'a, I>(headers: I) -> std::result::Result<Self, Error>
     where
         I: IntoIterator<Item = (&'a str, &'a str)>,
     {
@@ -60,7 +69,7 @@ impl FromStr for RateLimit {
         let iter = map
             .lines()
             .filter_map(|line| line.split_once(':').map(|(k, v)| (k.trim(), v.trim())));
-        RateLimit::new(iter)
+        RateLimit::from_iter(iter)
     }
 }
 

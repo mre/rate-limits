@@ -187,6 +187,8 @@ pub(crate) struct VendorSpec {
     pub remaining_header: &'static str,
     /// Header name for the reset time
     pub reset_header: &'static str,
+    /// Extra headers that can be used to identify the vendor
+    pub extra_headers: &'static [&'static str],
     /// Kind of reset time
     pub reset_kind: ResetTimeKind,
     /// Duration of the rate limit interval
@@ -200,6 +202,7 @@ impl VendorSpec {
         used_header: Option<&'static str>,
         remaining_header: &'static str,
         reset_header: &'static str,
+        extra_headers: &'static [&'static str],
         reset_kind: ResetTimeKind,
         duration: Option<Duration>,
     ) -> Self {
@@ -209,6 +212,7 @@ impl VendorSpec {
             used_header,
             remaining_header,
             reset_header,
+            extra_headers,
             reset_kind,
             duration,
         }
@@ -223,56 +227,66 @@ pub(crate) static VENDORS: &[VendorSpec] = &[
         None,
         "RateLimit-Remaining",
         "RateLimit-Reset",
+        &[],
         ResetTimeKind::Seconds,
         None,
     ),
-    // Reddit (https://www.reddit.com/r/redditdev/comments/1yxrp7/formal_ratelimiting_headers/)
+    // Reddit (https://support.reddithelp.com/hc/en-us/articles/16160319875092-Reddit-Data-API-Wiki)
     VendorSpec::new(
         Vendor::Reddit,
         None,
         Some("X-Ratelimit-Used"),
         "X-Ratelimit-Remaining",
         "X-Ratelimit-Reset",
+        &[],
         ResetTimeKind::Seconds,
         Some(Duration::minutes(10)),
     ),
-    // Github (https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api?apiVersion=2022-11-28#checking-the-status-of-your-rate-limit)
+    // Github (https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api)
     VendorSpec::new(
         Vendor::Github,
         Some("x-ratelimit-limit"),
-        None,
+        Some("x-ratelimit-used"),
         "x-ratelimit-remaining",
         "x-ratelimit-reset",
+        &["x-ratelimit-resource"],
         ResetTimeKind::Timestamp,
         Some(Duration::HOUR),
     ),
-    // Twilio (https://www.twilio.com/docs/sendgrid/api-reference/how-to-use-the-sendgrid-v3-api/rate-limits)
+    // Twilio (https://docs.sendgrid.com/api-reference/how-to-use-the-sendgrid-v3-api/rate-limits)
     VendorSpec::new(
         Vendor::Twilio,
         Some("X-RateLimit-Limit"),
         None,
         "X-RateLimit-Remaining",
         "X-RateLimit-Reset",
+        &[],
         ResetTimeKind::Timestamp,
         None,
     ),
-    // Linear (https://linear.app/developers/rate-limiting#api-request-limits)
+    // Linear (https://linear.app/developers/rate-limiting)
     VendorSpec::new(
         Vendor::Linear,
         Some("X-RateLimit-Requests-Limit"),
         None,
         "X-RateLimit-Requests-Remaining",
         "X-RateLimit-Requests-Reset",
+        &[
+            "X-RateLimit-Complexity-Limit",
+            "X-RateLimit-Complexity-Remaining",
+            "X-RateLimit-Complexity-Reset",
+        ],
         ResetTimeKind::TimestampMillis,
         Some(Duration::hours(1)),
     ),
-    // Twitter (https://docs.x.com/x-api/fundamentals/rate-limits)
+    // Twitter / X (https://docs.x.com/x-api/fundamentals/rate-limits)
     VendorSpec::new(
         Vendor::Twitter,
         Some("x-rate-limit-limit"),
         None,
         "x-rate-limit-remaining",
         "x-rate-limit-reset",
+        &[],
         ResetTimeKind::Timestamp,
         Some(Duration::minutes(15)),
     ),
@@ -283,16 +297,18 @@ pub(crate) static VENDORS: &[VendorSpec] = &[
         None,
         "X-RateLimit-Remaining",
         "X-RateLimit-Reset",
+        &[],
         ResetTimeKind::ImfFixdate,
         Some(Duration::seconds(60)),
     ),
-    // Gitlab (https://docs.gitlab.com/administration/settings/user_and_ip_rate_limits/#headers-returned-for-all-requests)
+    // Gitlab (https://docs.gitlab.com/ee/administration/settings/user_and_ip_rate_limits.html#headers-returned-for-all-requests)
     VendorSpec::new(
         Vendor::Gitlab,
         Some("RateLimit-Limit"),
         Some("RateLimit-Observed"),
         "RateLimit-Remaining",
         "RateLimit-Reset",
+        &["RateLimit-ResetTime", "RateLimit-Name"],
         ResetTimeKind::Timestamp,
         Some(Duration::seconds(60)),
     ),
@@ -303,16 +319,22 @@ pub(crate) static VENDORS: &[VendorSpec] = &[
         None,
         "X-RateLimit-Remaining",
         "X-RateLimit-Next",
+        &[],
         ResetTimeKind::Iso8601,
         Some(Duration::seconds(60)),
     ),
-    // OpenAI (https://platform.openai.com/docs/guides/rate-limits)
+    // OpenAI (https://developers.openai.com/api/docs/guides/rate-limits)
     VendorSpec::new(
         Vendor::OpenAI,
         Some("x-ratelimit-limit-requests"),
         None,
         "x-ratelimit-remaining-requests",
         "x-ratelimit-reset-requests",
+        &[
+            "x-ratelimit-limit-tokens",
+            "x-ratelimit-remaining-tokens",
+            "x-ratelimit-reset-tokens",
+        ],
         ResetTimeKind::OpenAIDuration,
         None,
     ),

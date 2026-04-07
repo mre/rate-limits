@@ -18,6 +18,7 @@ struct VendorState<'a> {
     remaining: Option<&'a str>,
     reset: Option<&'a str>,
     used: Option<&'a str>,
+    extra_matches: usize,
 }
 
 impl<'a, I> Parser<'a, I>
@@ -37,14 +38,22 @@ where
         for (k, v) in self.iter {
             // Check specific vendors
             for (i, spec) in VENDORS.iter().enumerate() {
-                if spec.remaining_header == k {
+                if k.eq_ignore_ascii_case(spec.remaining_header) {
                     states[i].remaining = Some(v);
-                } else if spec.reset_header == k {
+                } else if k.eq_ignore_ascii_case(spec.reset_header) {
                     states[i].reset = Some(v);
-                } else if Some(k) == spec.limit_header {
+                } else if spec
+                    .limit_header
+                    .map_or(false, |h| k.eq_ignore_ascii_case(h))
+                {
                     states[i].limit = Some(v);
-                } else if Some(k) == spec.used_header {
+                } else if spec
+                    .used_header
+                    .map_or(false, |h| k.eq_ignore_ascii_case(h))
+                {
                     states[i].used = Some(v);
+                } else if spec.extra_headers.iter().any(|h| k.eq_ignore_ascii_case(h)) {
+                    states[i].extra_matches += 1;
                 }
             }
 
@@ -90,6 +99,7 @@ where
                 if state.used.is_some() {
                     specificity += 1;
                 }
+                specificity += state.extra_matches;
                 parsed_results.push((specificity, res));
             }
         }

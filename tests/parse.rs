@@ -1,8 +1,8 @@
 #[cfg(test)]
 mod cli {
     use http::header::HeaderMap;
-    use rate_limits::{RateLimit, ResetTime, Vendor};
-    use time::{Duration, OffsetDateTime};
+    use rate_limits::{RateLimit, ResetTime, Vendor, VendorMask};
+    use time::OffsetDateTime;
 
     use rate_limits::headers;
 
@@ -22,14 +22,12 @@ mod cli {
                     OffsetDateTime::from_unix_timestamp(1350085394).unwrap()
                 ),
                 window: None,
-                vendor: Vendor::Unknown,
-                candidates: {
-                    let mut mask = rate_limits::VendorMask::empty();
-                    mask.insert(rate_limits::Vendor::Discord);
-                    mask.insert(rate_limits::Vendor::Github);
-                    mask.insert(rate_limits::Vendor::Twilio);
-                    mask
-                },
+                vendor: Vendor::Generic,
+                candidates: VendorMask::from_iter([
+                    Vendor::Discord,
+                    Vendor::Github,
+                    Vendor::Twilio,
+                ]),
             }),
         );
     }

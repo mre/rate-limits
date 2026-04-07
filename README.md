@@ -6,55 +6,20 @@ A crate for parsing HTTP rate limit headers as per the [IETF draft][draft].
 Inofficial implementations like the [Github rate limit headers][github] are
 also supported on a best effort basis. See [vendor list] for support.
 
-```rust
-use indoc::indoc;
-use std::str::FromStr;
-use time::{OffsetDateTime, Duration};
-use rate_limits::{Vendor, RateLimit, ResetTime, Headers};
-
-let headers = indoc! {"
-    x-ratelimit-limit: 5000
-    x-ratelimit-remaining: 4987
-    x-ratelimit-reset: 1350085394
-"};
-
-assert_eq!(
-    RateLimit::from_str(headers).unwrap(),
-    RateLimit::Rfc6585(Headers {
-        limit: 5000,
-        remaining: 4987,
-        reset: ResetTime::DateTime(
-            OffsetDateTime::from_unix_timestamp(1350085394).unwrap()
-        ),
-        window: None,
-        vendor: Vendor::Unknown,
-        candidates: {
-            let mut mask = rate_limits::VendorMask::empty();
-            mask.insert(Vendor::Discord);
-            mask.insert(Vendor::Github);
-            mask.insert(Vendor::Twilio);
-            mask
-        },
-    }),
-);
-```
-
-Also takes the `Retry-After` header into account when calculating the reset
-time.
-
-[`http::HeaderMap`][headermap] is supported as well:
+The easiest way to use this crate is with [`http::HeaderMap`][headermap] (which is the standard used by `reqwest`, `hyper`, and `axum`).
 
 ```rust
 use std::str::FromStr;
 use time::{OffsetDateTime, Duration};
-use rate_limits::{Vendor, RateLimit, ResetTime, Headers};
+use rate_limits::{Vendor, VendorMask, RateLimit, ResetTime, Headers};
 use http::header::HeaderMap;
 
 let mut headers = HeaderMap::new();
-headers.insert("X-RATELIMIT-LIMIT", "5000".parse().unwrap());
-headers.insert("X-RATELIMIT-REMAINING", "4987".parse().unwrap());
-headers.insert("X-RATELIMIT-RESET", "1350085394".parse().unwrap());
+headers.insert("x-ratelimit-limit", "5000".parse().unwrap());
+headers.insert("x-ratelimit-remaining", "4987".parse().unwrap());
+headers.insert("x-ratelimit-reset", "1350085394".parse().unwrap());
 
+// Because these headers are generic, the crate safely identifies multiple candidates
 assert_eq!(
     RateLimit::new(&headers).unwrap(),
     RateLimit::Rfc6585(Headers {
@@ -64,17 +29,57 @@ assert_eq!(
             OffsetDateTime::from_unix_timestamp(1350085394).unwrap()
         ),
         window: None,
-        vendor: Vendor::Unknown,
-        candidates: {
-            let mut mask = rate_limits::VendorMask::empty();
-            mask.insert(Vendor::Discord);
-            mask.insert(Vendor::Github);
-            mask.insert(Vendor::Twilio);
-            mask
-        },
+        vendor: Vendor::Generic,
+        candidates: VendorMask::from_iter([
+            Vendor::Discord,
+            Vendor::Github,
+            Vendor::Twilio,
+        ]),
     }),
 );
 ```
+
+### Unique Vendor Matching
+
+If the API response includes highly specific "extra" headers, the state machine's specificity scoring will identify the exact vendor. 
+
+You can parse rate limits directly from raw string iterators or via `FromStr`:
+
+```rust
+use indoc::indoc;
+use std::str::FromStr;
+use time::{OffsetDateTime, Duration};
+use rate_limits::{Vendor, VendorMask, RateLimit, ResetTime, Headers};
+
+let headers = indoc! {"
+    x-ratelimit-limit: 5000
+    x-ratelimit-remaining: 4987
+    x-ratelimit-reset: 1350085394
+    x-ratelimit-used: 13
+    x-ratelimit-resource: core
+"};
+
+// The parser observes that multiple vendors match the generic limit/remaining/reset headers 
+// (which populate the `candidates` mask). However, the presence of `x-ratelimit-used` and 
+// `x-ratelimit-resource` gives GitHub a higher specificity score, unambiguously identifying it 
+// in the `vendor` field!
+assert_eq!(
+    RateLimit::from_str(headers).unwrap(),
+    RateLimit::Rfc6585(Headers {
+        limit: 5000,
+        remaining: 4987,
+        reset: ResetTime::DateTime(
+            OffsetDateTime::from_unix_timestamp(1350085394).unwrap()
+        ),
+        window: Some(Duration::HOUR),
+        vendor: Vendor::Github,
+        candidates: VendorMask::from_iter([Vendor::Github]),
+    }),
+);
+```
+
+Also takes the `Retry-After` header into account when calculating the reset
+time.
 
 ### Further development
 

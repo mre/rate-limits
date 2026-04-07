@@ -62,11 +62,11 @@ impl Headers {
             .iter()
             .filter_map(|(k, v)| Some((k.as_str(), v.to_str().ok()?)))
             .collect();
-        Self::from_iter(iter)
+        Self::extract(iter)
     }
 
     /// Extracts rate limits from an iterator of HTTP headers.
-    pub fn from_iter<'a, I>(headers: I) -> std::result::Result<Self, Error>
+    pub fn extract<'a, I>(headers: I) -> std::result::Result<Self, Error>
     where
         I: IntoIterator<Item = (&'a str, &'a str)>,
     {
@@ -100,7 +100,7 @@ impl FromStr for Headers {
         let iter = map
             .lines()
             .filter_map(|line| line.split_once(':').map(|(k, v)| (k.trim(), v.trim())));
-        Headers::from_iter(iter)
+        Headers::extract(iter)
     }
 }
 
@@ -117,13 +117,13 @@ mod tests {
             "x-ratelimit-limit: 5000\nx-ratelimit-remaining: 5\nx-ratelimit-reset: 1350085394",
         )
         .unwrap();
-        assert_eq!(map.vendor, Vendor::Unknown);
+        assert_eq!(map.vendor, Vendor::Generic);
         assert!(map.candidates.contains(Vendor::Github));
 
         let map =
             Headers::from_str("RateLimit-Limit: 5000\nRateLimit-Remaining: 5\nRateLimit-Reset: 10")
                 .unwrap();
-        assert_eq!(map.vendor, Vendor::Unknown);
+        assert_eq!(map.vendor, Vendor::Generic);
     }
 
     #[test]

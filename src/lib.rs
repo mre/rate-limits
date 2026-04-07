@@ -72,16 +72,16 @@ impl RateLimit {
             .iter()
             .filter_map(|(k, v)| Some((k.as_str(), v.to_str().ok()?)))
             .collect();
-        Self::from_iter(iter)
+        Self::extract(iter)
     }
 
     /// Create a new `RateLimit` from an iterator over HTTP headers.
-    pub fn from_iter<'a, I>(headers: I) -> std::result::Result<Self, Error>
+    pub fn extract<'a, I>(headers: I) -> std::result::Result<Self, Error>
     where
         I: IntoIterator<Item = (&'a str, &'a str)> + Clone,
     {
-        let rfc6585 = headers::Headers::from_iter(headers.clone());
-        let retryafter = retry_after::RateLimit::from_iter(headers);
+        let rfc6585 = headers::Headers::extract(headers.clone());
+        let retryafter = retry_after::RateLimit::extract(headers);
 
         match (rfc6585, retryafter) {
             (Ok(rfc6585), Ok(retryafter)) => {
@@ -153,7 +153,7 @@ impl FromStr for RateLimit {
         let iter = map
             .lines()
             .filter_map(|line| line.split_once(':').map(|(k, v)| (k.trim(), v.trim())));
-        RateLimit::from_iter(iter)
+        RateLimit::extract(iter)
     }
 }
 

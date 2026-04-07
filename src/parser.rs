@@ -42,15 +42,9 @@ where
                     states[i].remaining = Some(v);
                 } else if k.eq_ignore_ascii_case(spec.reset_header) {
                     states[i].reset = Some(v);
-                } else if spec
-                    .limit_header
-                    .is_some_and(|h| k.eq_ignore_ascii_case(h))
-                {
+                } else if spec.limit_header.is_some_and(|h| k.eq_ignore_ascii_case(h)) {
                     states[i].limit = Some(v);
-                } else if spec
-                    .used_header
-                    .is_some_and(|h| k.eq_ignore_ascii_case(h))
-                {
+                } else if spec.used_header.is_some_and(|h| k.eq_ignore_ascii_case(h)) {
                     states[i].used = Some(v);
                 } else if spec.extra_headers.iter().any(|h| k.eq_ignore_ascii_case(h)) {
                     states[i].extra_matches += 1;
@@ -77,7 +71,6 @@ where
             }
         }
 
-        let mut candidates = VendorMask::empty();
         let mut parsed_results = Vec::new();
 
         for (i, spec) in VENDORS.iter().enumerate() {
@@ -88,9 +81,6 @@ where
                 && (state.limit.is_some() || state.used.is_some())
                 && let Ok(res) = Self::try_parse_vendor_spec(spec, state)
             {
-                // We found a valid vendor spec, add it to candidates
-                candidates.insert(spec.vendor);
-
                 // Calculate specificity score: 2 for remaining and reset, +1 for limit, +1 for used
                 let mut specificity = 2;
                 if state.limit.is_some() {
@@ -108,6 +98,14 @@ where
         // how many of the expected headers were found (limit, used, remaining,
         // reset)
         parsed_results.sort_by_key(|&(score, _)| std::cmp::Reverse(score));
+
+        let highest_score = parsed_results.first().map(|&(score, _)| score).unwrap_or(0);
+        let mut candidates = VendorMask::empty();
+        for &(score, (vendor, ..)) in &parsed_results {
+            if score == highest_score {
+                candidates.insert(vendor);
+            }
+        }
 
         match parsed_results.len() {
             0 => {
@@ -137,23 +135,32 @@ where
                         remaining,
                         reset,
                         window: None,
-                        vendor: Vendor::Unknown,
+                        vendor: Vendor::Generic,
                         candidates: VendorMask::empty(),
                     })
                 } else {
                     Err(Error::NoMatchingVariant)
                 }
             }
-            len => {
+            _ => {
+                let is_ambiguous =
+                    parsed_results.len() > 1 && parsed_results[1].0 == parsed_results[0].0;
+
                 let (_, (vendor, limit, remaining, reset, window)) =
                     parsed_results.into_iter().next().unwrap();
-                let vendor = if len == 1 { vendor } else { Vendor::Unknown };
+
+                let unambiguous_vendor = if is_ambiguous {
+                    Vendor::Generic
+                } else {
+                    vendor
+                };
+
                 Ok(Headers {
                     limit,
                     remaining,
                     reset,
                     window,
-                    vendor,
+                    vendor: unambiguous_vendor,
                     candidates,
                 })
             }

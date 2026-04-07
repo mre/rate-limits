@@ -7,11 +7,11 @@ use time::Duration;
 /// which define how to parse them.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Vendor {
-    /// Unknown vendor, but valid rate limit headers.
+    /// Generic vendor, but valid rate limit headers.
     ///
     /// APIs like Notion, Figma, Supabase, and Twitch rely on standard headers
     /// and are officially and fully supported via this generic fallback.
-    Unknown,
+    Generic,
     /// Akamai rate limit headers
     Akamai,
     /// Discord rate limit headers
@@ -38,10 +38,10 @@ pub enum Vendor {
 
 impl Vendor {
     /// Returns the bitmask representation of the vendor for use in `VendorMask`.
-    /// `Vendor::Unknown` does not have a bit representation.
+    /// `Vendor::Generic` does not have a bit representation.
     pub(crate) const fn bit(self) -> Option<u64> {
         match self {
-            Vendor::Unknown => None,
+            Vendor::Generic => None,
             Vendor::Akamai => Some(1 << 0),
             Vendor::Discord => Some(1 << 1),
             Vendor::Github => Some(1 << 2),
@@ -56,7 +56,7 @@ impl Vendor {
         }
     }
 
-    /// Returns a list of all identifiable vendors (excluding Unknown).
+    /// Returns a list of all identifiable vendors (excluding Generic).
     pub(crate) const fn identifiable() -> &'static [Vendor] {
         &[
             Vendor::Akamai,
@@ -149,6 +149,16 @@ impl VendorMask {
     }
 }
 
+impl FromIterator<Vendor> for VendorMask {
+    fn from_iter<I: IntoIterator<Item = Vendor>>(iter: I) -> Self {
+        let mut mask = VendorMask::empty();
+        for vendor in iter {
+            mask.insert(vendor);
+        }
+        mask
+    }
+}
+
 impl IntoIterator for VendorMask {
     type Item = Vendor;
     type IntoIter = VendorMaskIter;
@@ -203,6 +213,7 @@ pub(crate) struct VendorSpec {
 }
 
 impl VendorSpec {
+    #[allow(clippy::too_many_arguments)]
     const fn new(
         vendor: Vendor,
         limit_header: Option<&'static str>,

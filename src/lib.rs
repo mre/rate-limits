@@ -27,6 +27,7 @@ pub mod retry_after;
 use std::str::FromStr;
 
 use error::{Error, Result};
+#[cfg(feature = "http")]
 use http::HeaderMap;
 
 use std::time::Duration;
@@ -67,6 +68,7 @@ pub enum RateLimit {
 
 impl RateLimit {
     /// Create a new `RateLimit` from a `http::HeaderMap`.
+    #[cfg(feature = "http")]
     pub fn new(headers: &HeaderMap) -> std::result::Result<Self, Error> {
         let iter: Vec<_> = headers
             .iter()
@@ -154,6 +156,20 @@ impl FromStr for RateLimit {
             .lines()
             .filter_map(|line| line.split_once(':').map(|(k, v)| (k.trim(), v.trim())));
         RateLimit::extract(iter)
+    }
+}
+
+#[cfg(feature = "reqwest")]
+impl TryFrom<&reqwest::Response> for RateLimit {
+    type Error = Error;
+
+    fn try_from(response: &reqwest::Response) -> Result<Self> {
+        let headers = response.headers();
+        let iter: Vec<_> = headers
+            .iter()
+            .filter_map(|(k, v)| Some((k.as_str(), v.to_str().ok()?)))
+            .collect();
+        Self::extract(iter)
     }
 }
 

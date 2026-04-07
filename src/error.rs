@@ -31,12 +31,15 @@ pub enum Error {
     HeaderWithoutColon(String),
 
     /// Invalid header name
+    #[cfg(feature = "http")]
     InvalidHeaderName(#[from] http::header::InvalidHeaderName),
 
     /// Invalid header value
+    #[cfg(feature = "http")]
     InvalidHeaderValue(#[from] http::header::InvalidHeaderValue),
 
     /// Cannot convert header value to string
+    #[cfg(feature = "http")]
     ToStr(#[from] http::header::ToStrError),
 
     /// Cannot parse rate limit header value: {0}

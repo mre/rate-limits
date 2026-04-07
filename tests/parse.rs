@@ -1,3 +1,5 @@
+#![cfg(feature = "http")]
+
 #[cfg(test)]
 mod cli {
     use http::header::HeaderMap;

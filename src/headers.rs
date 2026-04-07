@@ -9,6 +9,7 @@ use crate::{
     reset_time::ResetTime,
     vendors::{Vendor, VendorMask},
 };
+#[cfg(feature = "http")]
 use http::HeaderMap;
 use std::time::Duration;
 
@@ -57,6 +58,7 @@ impl Headers {
     ///
     /// Returns an error if the headers do not contain a known rate limit
     /// format, or if the header values cannot be parsed.
+    #[cfg(feature = "http")]
     pub fn new(headers: &HeaderMap) -> std::result::Result<Self, Error> {
         let iter: Vec<_> = headers
             .iter()

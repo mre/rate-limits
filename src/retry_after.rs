@@ -20,6 +20,7 @@ impl RateLimit {
     /// Rate limit implementation based on `Retry-After` header value
     ///
     /// See <https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Retry-After>
+    #[cfg(feature = "http")]
     pub fn new(headers: &http::HeaderMap) -> std::result::Result<Self, Error> {
         let iter: Vec<_> = headers
             .iter()

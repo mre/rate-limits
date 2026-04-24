@@ -1,4 +1,5 @@
 #![cfg(feature = "http")]
+#![allow(missing_docs)]
 
 #[cfg(test)]
 mod cli {

@@ -60,11 +60,7 @@ impl Headers {
     /// format, or if the header values cannot be parsed.
     #[cfg(feature = "http")]
     pub fn new(headers: &HeaderMap) -> std::result::Result<Self, Error> {
-        let iter: Vec<_> = headers
-            .iter()
-            .filter_map(|(k, v)| Some((k.as_str(), v.to_str().ok()?)))
-            .collect();
-        Self::extract(iter)
+        Self::extract(crate::convert::header_map_str_pairs(headers))
     }
 
     /// Extracts rate limits from an iterator of HTTP headers.
@@ -99,10 +95,7 @@ impl FromStr for Headers {
     type Err = Error;
 
     fn from_str(map: &str) -> Result<Self> {
-        let iter = map
-            .lines()
-            .filter_map(|line| line.split_once(':').map(|(k, v)| (k.trim(), v.trim())));
-        Headers::extract(iter)
+        Headers::extract(crate::convert::parse_header_lines(map))
     }
 }
 
@@ -120,7 +113,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(map.vendor, Vendor::Generic);
-        assert!(map.candidates.contains(Vendor::Github));
+        assert!(map.candidates.contains(VendorMask::GITHUB));
 
         let map =
             Headers::from_str("RateLimit-Limit: 5000\nRateLimit-Remaining: 5\nRateLimit-Reset: 10")

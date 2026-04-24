@@ -3,8 +3,11 @@
 [![docs.rs](https://docs.rs/rate-limits/badge.svg)](https://docs.rs/rate-limits)
 
 A crate for parsing HTTP rate limit headers as per the [IETF draft][draft].
-Inofficial implementations like the [Github rate limit headers][github] are
-also supported on a best effort basis. See [vendor list] for support.
+Unofficial implementations like the [Github rate limit headers][github] are
+also supported, with vendor detection driven by exact (case-sensitive) header
+name matching for stronger disambiguation between APIs that share header
+names. APIs that aren't explicitly listed still parse via a generic fallback
+on a best-effort basis. See [vendor list] for the set of recognized vendors.
 
 The easiest way to use this crate is with [`http::HeaderMap`][headermap] (which is the standard used by `reqwest`, `hyper`, and `axum`).
 

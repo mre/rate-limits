@@ -1,3 +1,33 @@
+//! Vendor catalog and candidate-set bookkeeping.
+//!
+//! This module is the single source of truth for which APIs the crate
+//! understands and how their rate-limit headers look. Everything in here
+//! is consumed by the [`crate::parser`] state machine, which simply walks
+//! the [`VENDORS`] table and matches headers against each [`VendorSpec`].
+//!
+//! The module exposes three layers, in increasing specificity:
+//!
+//! 1. [`Vendor`] - the public, user-facing enum identifying a known API
+//!    (or [`Vendor::Generic`] for the standards-compliant fallback).
+//! 2. [`VendorMask`] - a `bitflags`-backed set of [`Vendor`]s used to
+//!    report ambiguity when several vendors match equally well, without
+//!    allocating.
+//! 3. [`VendorSpec`] - a private record describing exactly which header
+//!    names a vendor uses, which reset-time format applies, and (when
+//!    known) the rate-limit window. The static [`VENDORS`] slice holds
+//!    one entry per identifiable vendor.
+//!
+//! # Adding a new vendor
+//!
+//! 1. Add a variant to [`Vendor`] with a doc link to the vendor's
+//!    rate-limiting documentation.
+//! 2. Add a matching bit constant to [`VendorMask`] and wire it up in
+//!    [`Vendor::bit`] and [`Vendor::identifiable`].
+//! 3. Append a [`VendorSpec`] entry to [`VENDORS`]. The order matters
+//!    for tie-breaking when two vendors share core header names but
+//!    differ in `reset_kind` (see comments in the table for examples).
+//! 4. Bump the array length in [`crate::parser::Parser::parse`].
+
 use crate::reset_time::ResetTimeKind;
 use std::time::Duration;
 
@@ -12,51 +42,73 @@ pub enum Vendor {
     /// APIs like Notion, Figma, Supabase, and Twitch rely on standard headers
     /// and are officially and fully supported via this generic fallback.
     Generic,
-    /// Akamai rate limit headers
+    /// Akamai rate limit headers.
+    ///
+    /// <https://techdocs.akamai.com/adaptive-media-delivery/reference/rate-limiting>
     Akamai,
-    /// Discord rate limit headers
+    /// Discord rate limit headers.
+    ///
+    /// <https://discord.com/developers/docs/topics/rate-limits>
     Discord,
-    /// Github API rate limit headers
+    /// GitHub API rate limit headers.
+    ///
+    /// <https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api>
     Github,
-    /// Gitlab rate limit headers
+    /// GitLab rate limit headers.
+    ///
+    /// <https://docs.gitlab.com/ee/administration/settings/user_and_ip_rate_limits.html#headers-returned-for-all-requests>
     Gitlab,
-    /// Linear rate limit headers (GraphQL)
+    /// Linear rate limit headers (GraphQL).
+    ///
+    /// <https://linear.app/developers/rate-limiting>
     Linear,
-    /// OpenAI rate limit headers
+    /// OpenAI rate limit headers.
+    ///
+    /// <https://developers.openai.com/api/docs/guides/rate-limits>
     OpenAI,
-    /// Rate limit headers as defined in the `polli-ratelimit-headers-00` draft
+    /// Rate limit headers as defined in the `polli-ratelimit-headers-00` IETF draft.
+    ///
+    /// <https://datatracker.ietf.org/doc/html/draft-polli-ratelimit-headers-00>
     PolliDraft,
-    /// Reddit rate limit headers
+    /// Reddit rate limit headers.
+    ///
+    /// <https://support.reddithelp.com/hc/en-us/articles/16160319875092-Reddit-Data-API-Wiki>
     Reddit,
-    /// Twilio rate limit headers
+    /// Twilio (SendGrid) rate limit headers.
+    ///
+    /// <https://docs.sendgrid.com/api-reference/how-to-use-the-sendgrid-v3-api/rate-limits>
     Twilio,
-    /// Twitter API rate limit headers
+    /// Twitter / X API rate limit headers.
+    ///
+    /// <https://docs.x.com/x-api/fundamentals/rate-limits>
     Twitter,
-    /// Vimeo rate limit headers
+    /// Vimeo rate limit headers.
+    ///
+    /// <https://developer.vimeo.com/guidelines/rate-limiting>
     Vimeo,
 }
 
 impl Vendor {
-    /// Returns the bitmask representation of the vendor for use in `VendorMask`.
-    /// `Vendor::Generic` does not have a bit representation.
-    pub(crate) const fn bit(self) -> Option<u64> {
-        match self {
-            Vendor::Generic => None,
-            Vendor::Akamai => Some(1 << 0),
-            Vendor::Discord => Some(1 << 1),
-            Vendor::Github => Some(1 << 2),
-            Vendor::Gitlab => Some(1 << 3),
-            Vendor::Linear => Some(1 << 4),
-            Vendor::OpenAI => Some(1 << 5),
-            Vendor::PolliDraft => Some(1 << 6),
-            Vendor::Reddit => Some(1 << 7),
-            Vendor::Twilio => Some(1 << 8),
-            Vendor::Twitter => Some(1 << 9),
-            Vendor::Vimeo => Some(1 << 10),
-        }
+    /// Returns the [`VendorMask`] bit for this vendor, or `None` for
+    /// [`Vendor::Generic`] (which has no bit representation).
+    pub(crate) const fn bit(self) -> Option<VendorMask> {
+        Some(match self {
+            Vendor::Generic => return None,
+            Vendor::Akamai => VendorMask::AKAMAI,
+            Vendor::Discord => VendorMask::DISCORD,
+            Vendor::Github => VendorMask::GITHUB,
+            Vendor::Gitlab => VendorMask::GITLAB,
+            Vendor::Linear => VendorMask::LINEAR,
+            Vendor::OpenAI => VendorMask::OPENAI,
+            Vendor::PolliDraft => VendorMask::POLLI_DRAFT,
+            Vendor::Reddit => VendorMask::REDDIT,
+            Vendor::Twilio => VendorMask::TWILIO,
+            Vendor::Twitter => VendorMask::TWITTER,
+            Vendor::Vimeo => VendorMask::VIMEO,
+        })
     }
 
-    /// Returns a list of all identifiable vendors (excluding Generic).
+    /// Returns a list of all identifiable vendors (excluding `Generic`).
     pub(crate) const fn identifiable() -> &'static [Vendor] {
         &[
             Vendor::Akamai,
@@ -74,96 +126,76 @@ impl Vendor {
     }
 }
 
-/// A lightweight bitmask for tracking sets of candidates without allocation.
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Default)]
-pub struct VendorMask(u64);
-
-impl std::fmt::Debug for VendorMask {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_list().entries(*self).finish()
+bitflags::bitflags! {
+    /// A lightweight bitmask for tracking sets of candidate vendors without
+    /// allocation.
+    ///
+    /// Each identifiable vendor occupies a single bit. Combine them using
+    /// the usual bitwise operators:
+    ///
+    /// ```
+    /// use rate_limits::VendorMask;
+    /// let mask = VendorMask::GITHUB | VendorMask::AKAMAI;
+    /// assert_eq!(mask.count(), 2);
+    /// assert!(mask.contains(VendorMask::GITHUB));
+    /// ```
+    ///
+    /// [`Vendor::Generic`] is intentionally not representable, since it
+    /// denotes the absence of a specific vendor match. Converting it via
+    /// [`VendorMask::from`] yields an empty mask.
+    #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Default)]
+    pub struct VendorMask: u64 {
+        /// See [`Vendor::Akamai`].
+        const AKAMAI      = 1 << 0;
+        /// See [`Vendor::Discord`].
+        const DISCORD     = 1 << 1;
+        /// See [`Vendor::Github`].
+        const GITHUB      = 1 << 2;
+        /// See [`Vendor::Gitlab`].
+        const GITLAB      = 1 << 3;
+        /// See [`Vendor::Linear`].
+        const LINEAR      = 1 << 4;
+        /// See [`Vendor::OpenAI`].
+        const OPENAI      = 1 << 5;
+        /// See [`Vendor::PolliDraft`].
+        const POLLI_DRAFT = 1 << 6;
+        /// See [`Vendor::Reddit`].
+        const REDDIT      = 1 << 7;
+        /// See [`Vendor::Twilio`].
+        const TWILIO      = 1 << 8;
+        /// See [`Vendor::Twitter`].
+        const TWITTER     = 1 << 9;
+        /// See [`Vendor::Vimeo`].
+        const VIMEO       = 1 << 10;
     }
 }
 
 impl VendorMask {
-    /// Creates a new empty `VendorMask`.
-    #[inline]
-    pub const fn empty() -> Self {
-        Self(0)
-    }
-
-    /// Creates a `VendorMask` with all identifiable vendors present.
-    #[inline]
-    pub const fn all() -> Self {
-        let mut mask = 0;
-        let mut i = 0;
-        let vendors = Vendor::identifiable();
-        while i < vendors.len() {
-            if let Some(bit) = vendors[i].bit() {
-                mask |= bit;
-            }
-            i += 1;
-        }
-        Self(mask)
-    }
-
-    /// Adds a vendor to the mask.
-    #[inline]
-    pub const fn insert(&mut self, vendor: Vendor) {
-        if let Some(bit) = vendor.bit() {
-            self.0 |= bit;
-        }
-    }
-
-    /// Removes a vendor from the mask.
-    #[inline]
-    pub const fn remove(&mut self, vendor: Vendor) {
-        if let Some(bit) = vendor.bit() {
-            self.0 &= !bit;
-        }
-    }
-
-    /// Checks if a vendor is in the mask.
-    #[inline]
-    pub const fn contains(self, vendor: Vendor) -> bool {
-        if let Some(bit) = vendor.bit() {
-            self.0 & bit != 0
-        } else {
-            false
-        }
-    }
-
     /// Returns the number of vendors in the mask.
     #[inline]
+    #[must_use]
     pub const fn count(self) -> u32 {
-        self.0.count_ones()
+        self.bits().count_ones()
     }
 
-    /// Returns the single vendor if only one is in the mask, otherwise None.
+    /// Returns the single [`Vendor`] if exactly one bit is set, otherwise `None`.
     #[inline]
+    #[must_use]
     pub fn single(self) -> Option<Vendor> {
         if self.count() == 1 {
-            self.into_iter().next()
+            self.vendors().next()
         } else {
             None
         }
     }
-}
 
-impl FromIterator<Vendor> for VendorMask {
-    fn from_iter<I: IntoIterator<Item = Vendor>>(iter: I) -> Self {
-        let mut mask = VendorMask::empty();
-        for vendor in iter {
-            mask.insert(vendor);
-        }
-        mask
-    }
-}
-
-impl IntoIterator for VendorMask {
-    type Item = Vendor;
-    type IntoIter = VendorMaskIter;
-
-    fn into_iter(self) -> Self::IntoIter {
+    /// Returns an iterator over the [`Vendor`]s present in this mask.
+    ///
+    /// Note: this is distinct from the bit-level [`IntoIterator`] impl
+    /// provided by `bitflags`, which yields one-bit `VendorMask` values.
+    #[inline]
+    #[must_use]
+    pub const fn vendors(self) -> VendorMaskIter {
         VendorMaskIter {
             mask: self,
             index: 0,
@@ -171,6 +203,23 @@ impl IntoIterator for VendorMask {
     }
 }
 
+impl From<Vendor> for VendorMask {
+    /// Converts a [`Vendor`] into its single-bit mask.
+    /// [`Vendor::Generic`] produces an empty mask.
+    #[inline]
+    fn from(vendor: Vendor) -> Self {
+        vendor.bit().unwrap_or_else(Self::empty)
+    }
+}
+
+impl FromIterator<Vendor> for VendorMask {
+    fn from_iter<I: IntoIterator<Item = Vendor>>(iter: I) -> Self {
+        iter.into_iter()
+            .fold(Self::empty(), |acc, v| acc | Self::from(v))
+    }
+}
+
+/// Iterator over the [`Vendor`]s present in a [`VendorMask`].
 #[derive(Debug)]
 pub struct VendorMaskIter {
     mask: VendorMask,
@@ -185,7 +234,9 @@ impl Iterator for VendorMaskIter {
         while self.index < vendors.len() {
             let vendor = vendors[self.index];
             self.index += 1;
-            if self.mask.contains(vendor) {
+            if let Some(bit) = vendor.bit()
+                && self.mask.contains(bit)
+            {
                 return Some(vendor);
             }
         }
@@ -338,7 +389,7 @@ pub(crate) static VENDORS: &[VendorSpec] = &[
             "x-ratelimit-remaining-tokens",
             "x-ratelimit-reset-tokens",
         ],
-        ResetTimeKind::OpenAIDuration,
+        ResetTimeKind::OpenAiDuration,
         None,
     ),
     // Twilio (https://docs.sendgrid.com/api-reference/how-to-use-the-sendgrid-v3-api/rate-limits)

@@ -1,19 +1,4 @@
 #![doc = include_str!("../README.md")]
-#![warn(clippy::all)]
-#![warn(
-    absolute_paths_not_starting_with_crate,
-    rustdoc::invalid_html_tags,
-    missing_copy_implementations,
-    missing_debug_implementations,
-    semicolon_in_expressions_from_macros,
-    unreachable_pub,
-    unused_extern_crates,
-    variant_size_differences,
-    clippy::missing_const_for_fn
-)]
-#![deny(anonymous_parameters, macro_use_extern_crate)]
-#![deny(missing_docs)]
-#![allow(clippy::module_name_repetitions)]
 
 mod convert;
 mod error;
@@ -70,11 +55,7 @@ impl RateLimit {
     /// Create a new `RateLimit` from a `http::HeaderMap`.
     #[cfg(feature = "http")]
     pub fn new(headers: &HeaderMap) -> std::result::Result<Self, Error> {
-        let iter: Vec<_> = headers
-            .iter()
-            .filter_map(|(k, v)| Some((k.as_str(), v.to_str().ok()?)))
-            .collect();
-        Self::extract(iter)
+        Self::extract(crate::convert::header_map_str_pairs(headers))
     }
 
     /// Create a new `RateLimit` from an iterator over HTTP headers.
@@ -152,10 +133,7 @@ impl FromStr for RateLimit {
     type Err = Error;
 
     fn from_str(map: &str) -> Result<Self> {
-        let iter = map
-            .lines()
-            .filter_map(|line| line.split_once(':').map(|(k, v)| (k.trim(), v.trim())));
-        RateLimit::extract(iter)
+        RateLimit::extract(crate::convert::parse_header_lines(map))
     }
 }
 
@@ -164,12 +142,7 @@ impl TryFrom<&reqwest::Response> for RateLimit {
     type Error = Error;
 
     fn try_from(response: &reqwest::Response) -> Result<Self> {
-        let headers = response.headers();
-        let iter: Vec<_> = headers
-            .iter()
-            .filter_map(|(k, v)| Some((k.as_str(), v.to_str().ok()?)))
-            .collect();
-        Self::extract(iter)
+        Self::extract(crate::convert::header_map_str_pairs(response.headers()))
     }
 }
 

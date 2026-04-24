@@ -1,7 +1,7 @@
 use crate::convert;
 use crate::error::{Error, Result};
 use crate::headers::Headers;
-use crate::reset_time::{ResetTime, ResetTimeKind};
+use crate::reset_time::ResetTime;
 use crate::vendors::{VENDORS, Vendor, VendorMask, VendorSpec};
 use std::time::Duration;
 
@@ -21,6 +21,59 @@ struct VendorState<'a> {
     extra_matches: usize,
 }
 
+/// Generic fallback header values, collected case-insensitively.
+///
+/// These match the well-known IETF / Twitter-style header names without
+/// committing to a specific vendor. They are used only when no vendor-specific
+/// match succeeds.
+#[derive(Default)]
+struct FallbackState<'a> {
+    limit: Option<&'a str>,
+    remaining: Option<&'a str>,
+    reset: Option<&'a str>,
+}
+
+/// Specificity score for a vendor candidate.
+///
+/// The score reflects how many of the vendor-specific headers were actually
+/// observed. Higher scores mean a more specific match. Ties between vendors
+/// are resolved in favor of [`Vendor::Generic`] in [`Parser::pick_best`].
+///
+/// The rubric is:
+///
+/// - +2 baseline (`remaining` and `reset` are always required)
+/// - +1 for `limit`
+/// - +1 for `used`
+/// - +1 per matched entry in `extra_headers`
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct Specificity(usize);
+
+impl From<&VendorState<'_>> for Specificity {
+    fn from(state: &VendorState<'_>) -> Self {
+        let mut score = 2; // remaining + reset
+        if state.limit.is_some() {
+            score += 1;
+        }
+        if state.used.is_some() {
+            score += 1;
+        }
+        score += state.extra_matches;
+        Self(score)
+    }
+}
+
+/// A successfully parsed candidate result, together with its specificity score.
+type ScoredResult = (Specificity, ParsedFields);
+type ParsedFields = (Vendor, usize, usize, ResetTime, Option<Duration>);
+
+const GENERIC_REMAINING: &[&str] = &[
+    "ratelimit-remaining",
+    "x-ratelimit-remaining",
+    "x-rate-limit-remaining",
+];
+const GENERIC_LIMIT: &[&str] = &["ratelimit-limit", "x-ratelimit-limit", "x-rate-limit-limit"];
+const GENERIC_RESET: &[&str] = &["ratelimit-reset", "x-ratelimit-reset", "x-rate-limit-reset"];
+
 impl<'a, I> Parser<'a, I>
 where
     I: IntoIterator<Item = (&'a str, &'a str)>,
@@ -29,49 +82,81 @@ where
         Self { iter }
     }
 
+    /// Parse rate-limit headers from the underlying iterator.
+    ///
+    /// The algorithm runs in two phases:
+    ///
+    /// 1. Classification: every header is scanned exactly once and routed
+    ///    to the appropriate vendor slot(s) and the generic fallback bucket.
+    ///    See [`Self::classify_header`].
+    /// 2. Resolution: every vendor whose required headers were observed is
+    ///    parsed and scored by [`Specificity`]. The highest-scoring candidate
+    ///    wins; ties collapse to [`Vendor::Generic`] but the [`VendorMask`]
+    ///    of all tied candidates is reported. If no vendor matches,
+    ///    [`Self::parse_fallback`] is consulted.
     pub(crate) fn parse(self) -> Result<Headers> {
-        let mut states: [VendorState<'a>; 11] = Default::default(); // 11 vendors in VENDORS
-        let mut fallback_limit = None;
-        let mut fallback_remaining = None;
-        let mut fallback_reset = None;
+        let mut states: [VendorState<'a>; 11] = Default::default();
+        let mut fallback = FallbackState::default();
 
         for (k, v) in self.iter {
-            // Check specific vendors
-            for (i, spec) in VENDORS.iter().enumerate() {
-                if k.eq_ignore_ascii_case(spec.remaining_header) {
-                    states[i].remaining = Some(v);
-                } else if k.eq_ignore_ascii_case(spec.reset_header) {
-                    states[i].reset = Some(v);
-                } else if spec.limit_header.is_some_and(|h| k.eq_ignore_ascii_case(h)) {
-                    states[i].limit = Some(v);
-                } else if spec.used_header.is_some_and(|h| k.eq_ignore_ascii_case(h)) {
-                    states[i].used = Some(v);
-                } else if spec.extra_headers.iter().any(|h| k.eq_ignore_ascii_case(h)) {
-                    states[i].extra_matches += 1;
-                }
-            }
+            Self::classify_header(k, v, &mut states, &mut fallback);
+        }
 
-            // Check generic fallbacks case-insensitively for fallback
-            let k_lower = k.to_ascii_lowercase();
-            if k_lower == "ratelimit-remaining"
-                || k_lower == "x-ratelimit-remaining"
-                || k_lower == "x-rate-limit-remaining"
-            {
-                fallback_remaining = Some(v);
-            } else if k_lower == "ratelimit-limit"
-                || k_lower == "x-ratelimit-limit"
-                || k_lower == "x-rate-limit-limit"
-            {
-                fallback_limit = Some(v);
-            } else if k_lower == "ratelimit-reset"
-                || k_lower == "x-ratelimit-reset"
-                || k_lower == "x-rate-limit-reset"
-            {
-                fallback_reset = Some(v);
+        let parsed_results = Self::parse_candidates(&states);
+
+        if parsed_results.is_empty() {
+            return Self::parse_fallback(&fallback);
+        }
+
+        Self::pick_best(parsed_results)
+    }
+
+    /// Route a single `(key, value)` header pair into the per-vendor state
+    /// slots and the generic fallback bucket.
+    ///
+    /// Vendor matching is case-insensitive at this stage; case-sensitive
+    /// disambiguation happens later via the specificity score (vendors with
+    /// matching `extra_headers` outrank vendors that share only the core
+    /// header names).
+    fn classify_header(
+        k: &'a str,
+        v: &'a str,
+        states: &mut [VendorState<'a>],
+        fallback: &mut FallbackState<'a>,
+    ) {
+        for (i, spec) in VENDORS.iter().enumerate() {
+            if k.eq_ignore_ascii_case(spec.remaining_header) {
+                states[i].remaining = Some(v);
+            } else if k.eq_ignore_ascii_case(spec.reset_header) {
+                states[i].reset = Some(v);
+            } else if spec.limit_header.is_some_and(|h| k.eq_ignore_ascii_case(h)) {
+                states[i].limit = Some(v);
+            } else if spec.used_header.is_some_and(|h| k.eq_ignore_ascii_case(h)) {
+                states[i].used = Some(v);
+            } else if spec.extra_headers.iter().any(|h| k.eq_ignore_ascii_case(h)) {
+                states[i].extra_matches += 1;
             }
         }
 
-        let mut parsed_results = Vec::new();
+        if Self::matches_any(k, GENERIC_REMAINING) {
+            fallback.remaining = Some(v);
+        } else if Self::matches_any(k, GENERIC_LIMIT) {
+            fallback.limit = Some(v);
+        } else if Self::matches_any(k, GENERIC_RESET) {
+            fallback.reset = Some(v);
+        }
+    }
+
+    /// Returns true if `k` matches any of `candidates` case-insensitively.
+    fn matches_any(k: &str, candidates: &[&str]) -> bool {
+        candidates.iter().any(|c| k.eq_ignore_ascii_case(c))
+    }
+
+    /// Try to parse every vendor whose required headers are present, and
+    /// return the resulting `(score, fields)` pairs sorted by descending
+    /// score.
+    fn parse_candidates(states: &[VendorState<'a>]) -> Vec<ScoredResult> {
+        let mut results = Vec::new();
 
         for (i, spec) in VENDORS.iter().enumerate() {
             let state = &states[i];
@@ -79,113 +164,98 @@ where
             if state.remaining.is_some()
                 && state.reset.is_some()
                 && (state.limit.is_some() || state.used.is_some())
-                && let Ok(res) = Self::try_parse_vendor_spec(spec, state)
+                && let Ok(fields) = Self::try_parse_vendor_spec(spec, state)
             {
-                // Calculate specificity score: 2 for remaining and reset, +1 for limit, +1 for used
-                let mut specificity = 2;
-                if state.limit.is_some() {
-                    specificity += 1;
-                }
-                if state.used.is_some() {
-                    specificity += 1;
-                }
-                specificity += state.extra_matches;
-                parsed_results.push((specificity, res));
+                results.push((Specificity::from(state), fields));
             }
         }
 
-        // Sort by specificity (descending) where specificity is determined by
-        // how many of the expected headers were found (limit, used, remaining,
-        // reset)
-        parsed_results.sort_by_key(|&(score, _)| std::cmp::Reverse(score));
+        results.sort_by_key(|&(score, _)| std::cmp::Reverse(score));
+        results
+    }
 
-        let highest_score = parsed_results.first().map(|&(score, _)| score).unwrap_or(0);
-        let mut candidates = VendorMask::empty();
-        for &(score, (vendor, ..)) in &parsed_results {
-            if score == highest_score {
-                candidates.insert(vendor);
-            }
-        }
+    /// From the (already sorted) candidate list, pick the winner and build
+    /// the final [`Headers`].
+    ///
+    /// If two or more candidates tie for the top score the result is
+    /// reported as [`Vendor::Generic`] (the parsed numeric values are still
+    /// trustworthy), but the [`VendorMask`] of all tied candidates is
+    /// returned so callers can inspect the ambiguity.
+    fn pick_best(parsed_results: Vec<ScoredResult>) -> Result<Headers> {
+        debug_assert!(!parsed_results.is_empty());
 
-        match parsed_results.len() {
-            0 => {
-                // Fallback
-                if let (Some(l_str), Some(rem_str), Some(res_str)) =
-                    (fallback_limit, fallback_remaining, fallback_reset)
-                {
-                    let limit = convert::to_usize(l_str)?;
-                    let remaining = convert::to_usize(rem_str)?;
+        let highest_score = parsed_results[0].0;
+        let candidates: VendorMask = parsed_results
+            .iter()
+            .take_while(|&&(score, _)| score == highest_score)
+            .map(|&(_, (vendor, ..))| vendor)
+            .collect();
 
-                    let reset = if let Ok(val) = convert::to_usize(res_str) {
-                        if val > 1_000_000_000 {
-                            ResetTime::new(res_str, ResetTimeKind::Timestamp)?
-                        } else {
-                            ResetTime::new(res_str, ResetTimeKind::Seconds)?
-                        }
-                    } else if let Ok(r) = ResetTime::new(res_str, ResetTimeKind::ImfFixdate) {
-                        r
-                    } else if let Ok(r) = ResetTime::new(res_str, ResetTimeKind::Iso8601) {
-                        r
-                    } else {
-                        return Err(Error::NoMatchingVariant);
-                    };
+        let is_ambiguous = parsed_results.len() > 1 && parsed_results[1].0 == parsed_results[0].0;
 
-                    Ok(Headers {
-                        limit,
-                        remaining,
-                        reset,
-                        window: None,
-                        vendor: Vendor::Generic,
-                        candidates: VendorMask::empty(),
-                    })
-                } else {
-                    Err(Error::NoMatchingVariant)
-                }
-            }
-            _ => {
-                let is_ambiguous =
-                    parsed_results.len() > 1 && parsed_results[1].0 == parsed_results[0].0;
+        let (_, (vendor, limit, remaining, reset, window)) =
+            parsed_results.into_iter().next().unwrap();
 
-                let (_, (vendor, limit, remaining, reset, window)) =
-                    parsed_results.into_iter().next().unwrap();
+        let unambiguous_vendor = if is_ambiguous {
+            Vendor::Generic
+        } else {
+            vendor
+        };
 
-                let unambiguous_vendor = if is_ambiguous {
-                    Vendor::Generic
-                } else {
-                    vendor
-                };
+        Ok(Headers {
+            limit,
+            remaining,
+            reset,
+            window,
+            vendor: unambiguous_vendor,
+            candidates,
+        })
+    }
 
-                Ok(Headers {
-                    limit,
-                    remaining,
-                    reset,
-                    window,
-                    vendor: unambiguous_vendor,
-                    candidates,
-                })
-            }
-        }
+    /// Build a [`Headers`] from generic (non-vendor-specific) header values
+    /// when no vendor candidate matched.
+    ///
+    /// The reset value is parsed by attempting, in order: numeric Unix
+    /// timestamp (when the value is "large enough" to plausibly be one),
+    /// numeric seconds offset, RFC 2822 / IMF-fixdate, and RFC 3339 /
+    /// ISO 8601.
+    fn parse_fallback(fallback: &FallbackState<'_>) -> Result<Headers> {
+        let (Some(l_str), Some(rem_str), Some(res_str)) =
+            (fallback.limit, fallback.remaining, fallback.reset)
+        else {
+            return Err(Error::NoMatchingVariant);
+        };
+
+        let limit = convert::to_usize(l_str)?;
+        let remaining = convert::to_usize(rem_str)?;
+        let reset = ResetTime::try_from(res_str)?;
+
+        Ok(Headers {
+            limit,
+            remaining,
+            reset,
+            window: None,
+            vendor: Vendor::Generic,
+            candidates: VendorMask::empty(),
+        })
     }
 
     /// Try to parse a vendor spec from the given state.
     ///
-    /// This checks if the required headers are present and can be parsed, and
-    /// returns the parsed values if successful.
-    fn try_parse_vendor_spec(
-        spec: &VendorSpec,
-        state: &VendorState,
-    ) -> Result<(Vendor, usize, usize, ResetTime, Option<Duration>)> {
+    /// This checks if the required headers are present and can be parsed,
+    /// and returns the parsed values if successful.
+    fn try_parse_vendor_spec(spec: &VendorSpec, state: &VendorState) -> Result<ParsedFields> {
         let remaining = convert::to_usize(state.remaining.ok_or(Error::MissingRemaining)?)?;
 
         let limit = if let Some(h) = state.limit {
             // If limit header is present, use it directly
             convert::to_usize(h)?
         } else if let Some(u) = state.used {
-            // If limit is missing but used is present, we can calculate limit as used + remaining
+            // If limit is missing but used is present, derive limit = used + remaining
             let used = convert::to_usize(u)?;
             used.saturating_add(remaining)
         } else {
-            // If both limit and used are missing, we cannot determine the limit
+            // Neither limit nor used was provided, so we cannot determine the limit
             return Err(Error::MissingLimit);
         };
 

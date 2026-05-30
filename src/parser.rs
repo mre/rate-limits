@@ -99,7 +99,19 @@ where
     ///    of all tied candidates is reported. If no vendor matches,
     ///    [`Self::parse_fallback`] is consulted.
     pub(crate) fn parse(self) -> Result<Headers> {
-        // Initialize empty state for each vendor.
+        let (states, fallback) = self.classify_headers();
+
+        let parsed_results = Self::parse_candidates(&states);
+        if parsed_results.is_empty() {
+            return Self::parse_fallback(&fallback);
+        }
+
+        Self::pick_best(parsed_results)
+    }
+
+    /// Consume the header iterator and sort every `(key, value)` pair into
+    /// the per-vendor state slots and the generic fallback bucket
+    fn classify_headers(self) -> ([VendorState<'a>; VENDOR_COUNT], FallbackState<'a>) {
         let mut states: [VendorState<'a>; VENDOR_COUNT] =
             std::array::from_fn(|_| VendorState::default());
         let mut fallback = FallbackState::default();
@@ -108,13 +120,7 @@ where
             Self::classify_header(k, v, &mut states, &mut fallback);
         }
 
-        let parsed_results = Self::parse_candidates(&states);
-
-        if parsed_results.is_empty() {
-            return Self::parse_fallback(&fallback);
-        }
-
-        Self::pick_best(parsed_results)
+        (states, fallback)
     }
 
     /// Route a single `(key, value)` header pair into the per-vendor state

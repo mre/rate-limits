@@ -26,7 +26,9 @@
 //! 3. Append a [`VendorSpec`] entry to [`VENDORS`]. The order matters
 //!    for tie-breaking when two vendors share core header names but
 //!    differ in `reset_kind` (see comments in the table for examples).
-//! 4. Bump the array length in [`crate::parser::Parser::parse`].
+//!
+//! The parser's per-vendor state array is sized from `VENDORS.len()`,
+//! so no manual length bookkeeping is required.
 
 use crate::reset_time::ResetTimeKind;
 use std::time::Duration;

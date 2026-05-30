@@ -105,7 +105,7 @@ impl TryFrom<&str> for ResetTime {
     type Error = Error;
 
     /// Best-effort parsing of a reset-time header value when the vendor
-    /// (and therefore the [`ResetTimeKind`]) is not known.
+    /// (and therefore the `ResetTimeKind`) is not known.
     ///
     /// Tries, in order:
     ///
@@ -115,7 +115,7 @@ impl TryFrom<&str> for ResetTime {
     /// 3. RFC 2822 / IMF-fixdate.
     /// 4. RFC 3339 / ISO 8601.
     ///
-    /// Returns [`Error::NoMatchingVariant`] if none of these succeed.
+    /// Returns `Error::NoMatchingVariant` if none of these succeed.
     fn try_from(value: &str) -> Result<Self> {
         if let Ok(n) = convert::to_usize(value) {
             // Values above ~Sep 2001 are almost certainly Unix timestamps;

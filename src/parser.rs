@@ -66,6 +66,10 @@ impl From<&VendorState<'_>> for Specificity {
 type ScoredResult = (Specificity, ParsedFields);
 type ParsedFields = (Vendor, usize, usize, ResetTime, Option<Duration>);
 
+/// Number of vendor slots, derived directly from [`VENDORS`] so the
+/// per-vendor state array can never fall out of sync with the table.
+const VENDOR_COUNT: usize = VENDORS.len();
+
 const GENERIC_REMAINING: &[&str] = &[
     "ratelimit-remaining",
     "x-ratelimit-remaining",
@@ -95,7 +99,9 @@ where
     ///    of all tied candidates is reported. If no vendor matches,
     ///    [`Self::parse_fallback`] is consulted.
     pub(crate) fn parse(self) -> Result<Headers> {
-        let mut states: [VendorState<'a>; 11] = Default::default();
+        // Initialize empty state for each vendor.
+        let mut states: [VendorState<'a>; VENDOR_COUNT] =
+            std::array::from_fn(|_| VendorState::default());
         let mut fallback = FallbackState::default();
 
         for (k, v) in self.iter {
@@ -124,20 +130,21 @@ where
         states: &mut [VendorState<'a>],
         fallback: &mut FallbackState<'a>,
     ) {
-        for (i, spec) in VENDORS.iter().enumerate() {
+        for (vendor, spec) in VENDORS.iter().enumerate() {
             if k.eq_ignore_ascii_case(spec.remaining_header) {
-                states[i].remaining = Some(v);
+                states[vendor].remaining = Some(v);
             } else if k.eq_ignore_ascii_case(spec.reset_header) {
-                states[i].reset = Some(v);
+                states[vendor].reset = Some(v);
             } else if spec.limit_header.is_some_and(|h| k.eq_ignore_ascii_case(h)) {
-                states[i].limit = Some(v);
+                states[vendor].limit = Some(v);
             } else if spec.used_header.is_some_and(|h| k.eq_ignore_ascii_case(h)) {
-                states[i].used = Some(v);
+                states[vendor].used = Some(v);
             } else if spec.extra_headers.iter().any(|h| k.eq_ignore_ascii_case(h)) {
-                states[i].extra_matches += 1;
+                states[vendor].extra_matches += 1;
             }
         }
 
+        // Also check for generic header matches, which are recorded in the fallback
         if Self::matches_any(k, GENERIC_REMAINING) {
             fallback.remaining = Some(v);
         } else if Self::matches_any(k, GENERIC_LIMIT) {

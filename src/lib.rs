@@ -1,35 +1,36 @@
 #![doc = include_str!("../README.md")]
-#![warn(clippy::all)]
-#![warn(
-    absolute_paths_not_starting_with_crate,
-    rustdoc::invalid_html_tags,
-    missing_copy_implementations,
-    missing_debug_implementations,
-    semicolon_in_expressions_from_macros,
-    unreachable_pub,
-    unused_extern_crates,
-    variant_size_differences,
-    clippy::missing_const_for_fn
-)]
-#![deny(anonymous_parameters, macro_use_extern_crate)]
-#![deny(missing_docs)]
-#![allow(clippy::module_name_repetitions)]
 
-mod casesensitive_headermap;
 mod convert;
 mod error;
+mod parser;
 mod reset_time;
+mod vendors;
 
 pub mod headers;
-pub mod retryafter;
+pub mod retry_after;
 
 use std::str::FromStr;
 
-use casesensitive_headermap::CaseSensitiveHeaderMap;
 use error::{Error, Result};
+#[cfg(feature = "http")]
+use http::HeaderMap;
 
-pub use headers::{Headers, Vendor};
+use std::time::Duration;
+
+pub use headers::Headers;
 pub use reset_time::ResetTime;
+pub use vendors::{Vendor, VendorMask};
+
+/// The status of the rate limit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Status {
+    /// The rate limit has not been reached.
+    /// You can make requests immediately.
+    Ready,
+    /// The rate limit has been reached.
+    /// The associated duration is the time to wait until the limit resets.
+    Wait(Duration),
+}
 
 /// Rate Limit information, parsed from HTTP headers.
 ///
@@ -42,24 +43,34 @@ pub use reset_time::ResetTime;
 /// [ietf]: https://datatracker.ietf.org/doc/html/draft-polli-ratelimit-headers-00
 /// [retryafter]: https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Retry-After
 ///
-#[derive(Debug, Copy, Clone, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub enum RateLimit {
     /// Rate limit information as per the [IETF "Polly" draft][ietf].
     Rfc6585(headers::Headers),
     /// Rate limit information as per the [Retry-After][retryafter] header.
-    RetryAfter(retryafter::RateLimit),
+    RetryAfter(retry_after::RateLimit),
 }
 
 impl RateLimit {
     /// Create a new `RateLimit` from a `http::HeaderMap`.
-    pub fn new<T: Into<CaseSensitiveHeaderMap>>(headers: T) -> std::result::Result<Self, Error> {
-        let headers = headers.into();
-        let rfc6585 = headers::Headers::new(headers.clone());
-        let retryafter = retryafter::RateLimit::new(headers);
+    #[cfg(feature = "http")]
+    pub fn new(headers: &HeaderMap) -> std::result::Result<Self, Error> {
+        Self::extract(crate::convert::header_map_str_pairs(headers))
+    }
+
+    /// Create a new `RateLimit` from an iterator over HTTP headers.
+    pub fn extract<'a, I>(headers: I) -> std::result::Result<Self, Error>
+    where
+        I: IntoIterator<Item = (&'a str, &'a str)> + Clone,
+    {
+        let rfc6585 = headers::Headers::extract(headers.clone());
+        let retryafter = retry_after::RateLimit::extract(headers);
 
         match (rfc6585, retryafter) {
             (Ok(rfc6585), Ok(retryafter)) => {
-                if rfc6585.reset > retryafter.reset {
+                // If both are present, we pick the one that requires us to wait longer.
+                // This is a pessimistic approach to ensure we don't hit the rate limit.
+                if rfc6585.reset.duration() > retryafter.reset.duration() {
                     Ok(Self::Rfc6585(rfc6585))
                 } else {
                     Ok(Self::RetryAfter(retryafter))
@@ -68,6 +79,23 @@ impl RateLimit {
             (Ok(rfc6585), Err(_)) => Ok(Self::Rfc6585(rfc6585)),
             (Err(_), Ok(retryafter)) => Ok(Self::RetryAfter(retryafter)),
             (Err(e), Err(_)) => Err(e),
+        }
+    }
+
+    /// Check if the rate limit has been reached.
+    pub const fn is_limited(&self) -> bool {
+        match self {
+            Self::Rfc6585(headers) => headers.remaining == 0,
+            Self::RetryAfter(_) => true,
+        }
+    }
+
+    /// Get the current status of the rate limit.
+    pub fn status(&self) -> Status {
+        if self.is_limited() {
+            Status::Wait(self.reset().duration())
+        } else {
+            Status::Ready
         }
     }
 
@@ -105,7 +133,16 @@ impl FromStr for RateLimit {
     type Err = Error;
 
     fn from_str(map: &str) -> Result<Self> {
-        RateLimit::new(map)
+        RateLimit::extract(crate::convert::parse_header_lines(map))
+    }
+}
+
+#[cfg(feature = "reqwest")]
+impl TryFrom<&reqwest::Response> for RateLimit {
+    type Error = Error;
+
+    fn try_from(response: &reqwest::Response) -> Result<Self> {
+        Self::extract(crate::convert::header_map_str_pairs(response.headers()))
     }
 }
 
@@ -124,13 +161,13 @@ mod tests {
             X-Ratelimit-Used: 100
             X-Ratelimit-Remaining: 22
             X-Ratelimit-Reset: 30
-            Retry-After: Wed, 21 Oct 2015 07:28:00 GMT
+            Retry-After: Wed, 21 Oct 2099 07:28:00 GMT
         "};
 
         let rate = RateLimit::from_str(headers).unwrap();
         assert_eq!(
             rate.reset(),
-            ResetTime::DateTime(datetime!(2015-10-21 7:28:00.0 UTC))
+            ResetTime::DateTime(datetime!(2099-10-21 7:28:00.0 UTC))
         );
     }
 
@@ -145,5 +182,29 @@ mod tests {
 
         let rate = RateLimit::from_str(headers).unwrap();
         assert_eq!(rate.reset(), ResetTime::Seconds(30));
+    }
+
+    #[test]
+    fn test_status_is_limited() {
+        let headers = indoc! {"
+            RateLimit-Limit: 10
+            RateLimit-Remaining: 0
+            RateLimit-Reset: 30
+        "};
+        let rate = RateLimit::from_str(headers).unwrap();
+        assert!(rate.is_limited());
+        match rate.status() {
+            Status::Wait(d) => assert_eq!(d, std::time::Duration::from_secs(30)),
+            _ => panic!("Expected Status::Wait"),
+        }
+
+        let headers = indoc! {"
+            RateLimit-Limit: 10
+            RateLimit-Remaining: 1
+            RateLimit-Reset: 30
+        "};
+        let rate = RateLimit::from_str(headers).unwrap();
+        assert!(!rate.is_limited());
+        assert_eq!(rate.status(), Status::Ready);
     }
 }

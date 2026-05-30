@@ -1,8 +1,11 @@
+#![cfg(feature = "http")]
+#![allow(missing_docs)]
+
 #[cfg(test)]
 mod cli {
     use http::header::HeaderMap;
-    use rate_limits::{RateLimit, ResetTime, Vendor};
-    use time::{Duration, OffsetDateTime};
+    use rate_limits::{RateLimit, ResetTime, Vendor, VendorMask};
+    use time::OffsetDateTime;
 
     use rate_limits::headers;
 
@@ -14,15 +17,20 @@ mod cli {
         headers.insert("X-RATELIMIT-RESET", "1350085394".parse().unwrap());
 
         assert_eq!(
-            RateLimit::new(headers).unwrap(),
+            RateLimit::new(&headers).unwrap(),
             RateLimit::Rfc6585(headers::Headers {
                 limit: 5000,
                 remaining: 4987,
                 reset: ResetTime::DateTime(
                     OffsetDateTime::from_unix_timestamp(1350085394).unwrap()
                 ),
-                window: Some(Duration::HOUR),
-                vendor: Vendor::Github
+                window: None,
+                vendor: Vendor::Generic,
+                candidates: VendorMask::from_iter([
+                    Vendor::Discord,
+                    Vendor::Github,
+                    Vendor::Twilio,
+                ]),
             }),
         );
     }
